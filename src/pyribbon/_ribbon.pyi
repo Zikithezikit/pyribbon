@@ -1,7 +1,7 @@
 from collections.abc import Iterable
-from typing import Self, final
+from typing import final
 
-from typing_extensions import Buffer
+from typing_extensions import Buffer, Self
 
 _Key = bytes | bytearray | memoryview | str | int
 
