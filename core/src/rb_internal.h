@@ -53,6 +53,19 @@ static inline uint64_t rb_parity64(uint64_t x) {
 #endif
 }
 
+/* Hint that the cache line holding p will be read soon. A no-op where no prefetch instruction is known. */
+static inline void rb_prefetch(const void *p) {
+#if defined(RB_GNU)
+  __builtin_prefetch(p, 0, 3);
+#elif defined(RB_MSVC) && defined(_M_X64)
+  _mm_prefetch((const char *)p, _MM_HINT_T0);
+#elif defined(RB_MSVC) && defined(_M_ARM64)
+  __prefetch(p);
+#else
+  (void)p;
+#endif
+}
+
 /* High 64 bits of the 128-bit product a * b. */
 static inline uint64_t rb_mulhi64(uint64_t a, uint64_t b) {
 #if defined(RB_GNU) && defined(__SIZEOF_INT128__)
@@ -109,9 +122,12 @@ typedef struct {
   uint32_t fp;
 } rb_eq;
 
-/* num_starts = num_rows - RB_WIDTH + 1; 1 <= r <= 32. */
-static inline rb_eq rb_derive(uint64_t hash, uint32_t attempt, uint64_t num_starts, uint32_t r) {
-  uint64_t state = hash ^ rb_mix64(((uint64_t)attempt + 1u) * RB_GAMMA);
+/* Per-attempt salt: depends only on the attempt index, so it is computed once per build attempt / per filter. */
+static inline uint64_t rb_attempt_salt(uint32_t attempt) { return rb_mix64(((uint64_t)attempt + 1u) * RB_GAMMA); }
+
+/* num_starts = num_rows - RB_WIDTH + 1; 1 <= r <= 32; salt = rb_attempt_salt(attempt). */
+static inline rb_eq rb_derive(uint64_t hash, uint64_t salt, uint64_t num_starts, uint32_t r) {
+  uint64_t state = hash ^ salt;
   uint64_t z0 = rb_mix64(state + RB_GAMMA);
   uint64_t z1 = rb_mix64(state + 2u * RB_GAMMA);
   uint64_t z2 = rb_mix64(state + 3u * RB_GAMMA);

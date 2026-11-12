@@ -159,7 +159,9 @@ rb_status rb_serialize(const rb_filter *f, void *dst, size_t cap);
 * `rb_filter` copies every header field into the struct at load time and **never re-reads the header from the
   buffer**. Only payload words are read, at offsets computed from the validated struct; so a buffer mutated after
   loading can give wrong answers but cannot cause an out-of-bounds read (no time-of-check/time-of-use hole).
-* **Build.** Arrays `coeff[m]` (`uint64_t`) and `res[m]` (`uint32_t`), 12 bytes/slot, empty slot = `coeff == 0`.
+* **Build.** One array of 16-byte slots `{uint64_t coeff; uint32_t res}` (one cache line per insertion), empty slot = `coeff == 0`.
+  Keys are processed in chunks of 16: the equations of a chunk are derived and their slots prefetched first, then inserted in
+  arrival order, so the result is identical to one-at-a-time insertion (the byte-for-byte vectors prove it).
   Per key: `i = start; c = coeff; b = fp`; loop { if slot `i` empty, store, done; `c ^= coeff[i]; b ^= res[i]`; if
   `c == 0`: redundant if `b == 0`, else failure; `j = ctz(c); i += j; c >>= j` } (R§4). `c` always has bit 0 set before
   the XOR and `c != 0` before `ctz`, so `1 ≤ j ≤ 63` and no shift reaches the type width. No pre-sort (R§4).
@@ -367,7 +369,7 @@ contents: read`.
    retry and bounded temporary memory. First roadmap item because it is the main reason to prefer ribbon over fuse at scale.
 2. Homogeneous variant (no failure, FP caveats, R§2); fractional `fp_bits` (floor/ceil columns); smash for small `m`.
 3. **BuRR** (0.06-1.4% overhead, but bucket sort, rollback, per-bucket thresholds and 4-layer recursion) and Balanced.
-4. SIMD queries (AVX512 POPCNT / 8-bit interleaving), prefetch pipeline for batches, parallel build (bump `w` positions per
+4. SIMD queries (AVX512 POPCNT / 8-bit interleaving), parallel build (bump `w` positions per
    block to cut the system into independent blocks, R§7).
 5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor; `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
 6. Cache effect of sorted vs random insertion for standard ribbon (not measured in the papers, R§4).
@@ -377,8 +379,8 @@ contents: read`.
 * The ε(n) fit rests on RocksDB's simulation (extrapolated beyond 2^17 slots) and [R Table 1]; v0.1 depends on Phase 2
   confirming it. The retry-with-growth rule bounds the damage but not the speed.
 * XXH3 is vendored from a 7.5k-line header; I trust its stability promise and test vectors but have not audited it.
-* Build memory: the banding arrays take 12 bytes/slot (about 14 bytes/key at the w=64 overhead) plus 8 bytes/key for `H`,
-  roughly 22 bytes/key, about 2.2 GB at `n = 1e8`, until sharding exists.
+* Build memory: the banding array takes 16 bytes/slot (about 18 bytes/key at the w=64 overhead) plus 8 bytes/key for `H`,
+  roughly 26 bytes/key, about 2.6 GB at `n = 1e8`, until sharding exists.
 * Windows/macOS builds, cibuildwheel and the MSVC fallbacks are unverified (R§12).
 * I read RocksDB-derived code through research notes; the implementation derives every step from [R]/[B] (R§9, R§10),
   uses no RocksDB constants and no pleat/ribbonGo test vectors, and cites its sources in code comments.

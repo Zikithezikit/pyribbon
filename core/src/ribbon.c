@@ -19,6 +19,7 @@ struct rb_filter {
   uint64_t num_rows; /* 0, or a multiple of 64 and >= 128 */
   uint64_t seed;
   uint64_t payload_xxh3;
+  uint64_t salt; /* rb_attempt_salt(attempt), derived (never read from the buffer) */
   uint32_t fp_bits;
   uint32_t attempt;
   const uint8_t *payload; /* (num_rows / 64) * fp_bits little-endian 64-bit words */
@@ -105,20 +106,29 @@ static rb_status rb_grow_rows(uint64_t *rows) {
 /* ------------------------------------------------------------------------------------ */
 /* construction                                                                         */
 
+/* One row of the banded system: 16 bytes, so an insertion touches one cache line instead of two. */
+typedef struct {
+  uint64_t coeff; /* coefficient word whose bit 0 is the pivot; 0 = empty slot */
+  uint32_t res;   /* r-bit result */
+  uint32_t pad;
+} rb_slot;
+
+#define RB_CHUNK 16u /* keys derived and prefetched together before being inserted or probed */
+
 /* Insert one equation. Slot i holds a coefficient word whose bit 0 is its pivot (0 = empty)
  * and a result word. Both the incoming and the stored word have bit 0 set, so after the XOR
  * bit 0 is clear: the shift below is by 1..63 and never reaches the word width [R Alg. 1].
  * Returns 1 on success (including a redundant equation), 0 if the system became unsolvable. */
-static int rb_band_insert(uint64_t *coeff, uint32_t *res, uint64_t i, uint64_t c, uint32_t b) {
+static int rb_band_insert(rb_slot *slots, uint64_t i, uint64_t c, uint32_t b) {
   for (;;) {
-    uint64_t stored = coeff[i];
+    uint64_t stored = slots[i].coeff;
     if (stored == 0) {
-      coeff[i] = c;
-      res[i] = b;
+      slots[i].coeff = c;
+      slots[i].res = b;
       return 1;
     }
     c ^= stored;
-    b ^= res[i];
+    b ^= slots[i].res;
     if (c == 0) return b == 0; /* duplicate / dependent but consistent equation, or a contradiction */
     unsigned j = rb_ctz64(c);  /* 1..63 */
     i += j;
@@ -129,12 +139,11 @@ static int rb_band_insert(uint64_t *coeff, uint32_t *res, uint64_t i, uint64_t c
 /* Back-substitution into the interleaved layout [R p4, sec. 5.2]. st[j] holds, at bit k, the
  * solution bit of column j at row i + k; when i is a multiple of 64 it is exactly the word
  * for block i / 64, column j. Rows are processed from the last to the first. */
-static void rb_back_substitute(const uint64_t *coeff, const uint32_t *res, uint64_t rows, uint32_t r,
-                               uint8_t *payload) {
+static void rb_back_substitute(const rb_slot *slots, uint64_t rows, uint32_t r, uint8_t *payload) {
   uint64_t st[RB_MAX_FP_BITS] = {0};
   for (uint64_t i = rows; i-- > 0;) {
-    uint64_t c = coeff[i];
-    uint32_t b = res[i];
+    uint64_t c = slots[i].coeff;
+    uint32_t b = slots[i].res;
     for (uint32_t j = 0; j < r; j++) {
       st[j] <<= 1; /* bit 0 = row i, still unknown (0): the dot product below excludes it */
       uint64_t v = rb_parity64(st[j] & c) ^ (uint64_t)((b >> j) & 1u);
@@ -182,8 +191,7 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
   double eps = p.overhead < 0.0 ? rb_default_overhead(n) : p.overhead;
   uint64_t rows;
   rb_status st = rb_initial_rows(n, eps, &rows);
-  uint64_t *coeff = NULL;
-  uint32_t *res = NULL;
+  rb_slot *slots = NULL;
   uint64_t alloc_rows = 0;
   for (uint32_t attempt = 0; st == RB_OK && attempt < p.max_attempts; attempt++) {
     if (attempt >= 2) { /* reseeding alone first; from the third attempt also grow the table */
@@ -191,42 +199,47 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
       if (st != RB_OK) break;
     }
     if (rows > alloc_rows) {
-      if (rows > SIZE_MAX / 16u) { st = RB_E_TOO_LARGE; break; }
-      free(coeff);
-      free(res);
-      coeff = (uint64_t *)calloc((size_t)rows, sizeof *coeff);
-      res = (uint32_t *)calloc((size_t)rows, sizeof *res);
+      if (rows > SIZE_MAX / sizeof(rb_slot)) { st = RB_E_TOO_LARGE; break; }
+      free(slots);
+      slots = (rb_slot *)calloc((size_t)rows, sizeof *slots);
       alloc_rows = rows;
-      if (!coeff || !res) { st = RB_E_NOMEM; break; }
+      if (!slots) { st = RB_E_NOMEM; break; }
     } else {
-      memset(coeff, 0, (size_t)rows * sizeof *coeff);
-      memset(res, 0, (size_t)rows * sizeof *res);
+      memset(slots, 0, (size_t)rows * sizeof *slots);
     }
     uint64_t num_starts = rows - RB_WIDTH + 1u;
-    size_t i = 0;
-    for (; i < n; i++) {
-      rb_eq eq = rb_derive(hashes[i], attempt, num_starts, p.fp_bits);
-      if (!rb_band_insert(coeff, res, eq.start, eq.coeff, eq.fp)) break;
+    uint64_t salt = rb_attempt_salt(attempt);
+    int solvable = 1;
+    for (size_t i = 0; i < n && solvable; i += RB_CHUNK) {
+      /* derive a chunk and prefetch its slots first: the random accesses then overlap instead of queueing.
+       * Equations are still inserted in arrival order, so the result is identical to one-at-a-time insertion. */
+      size_t cn = n - i < RB_CHUNK ? n - i : RB_CHUNK;
+      rb_eq eqs[RB_CHUNK];
+      for (size_t j = 0; j < cn; j++) {
+        eqs[j] = rb_derive(hashes[i + j], salt, num_starts, p.fp_bits);
+        rb_prefetch(&slots[eqs[j].start]);
+      }
+      for (size_t j = 0; j < cn; j++)
+        if (!rb_band_insert(slots, eqs[j].start, eqs[j].coeff, eqs[j].fp)) { solvable = 0; break; }
     }
-    if (i < n) continue; /* unsolvable: next attempt (st stays RB_OK; exhaustion is reported after the loop) */
+    if (!solvable) continue; /* unsolvable: next attempt (st stays RB_OK; exhaustion is reported after the loop) */
 
     size_t payload_len = rb_payload_bytes(rows, p.fp_bits);
     uint8_t *payload = (uint8_t *)malloc(payload_len);
     if (!payload) { st = RB_E_NOMEM; break; }
-    rb_back_substitute(coeff, res, rows, p.fp_bits, payload);
+    rb_back_substitute(slots, rows, p.fp_bits, payload);
     f->num_rows = rows;
     f->attempt = attempt;
+    f->salt = salt;
     f->owned = payload;
     f->payload = payload;
     f->payload_xxh3 = rb_xxh3_64(payload, payload_len);
     if (info) { info->attempts = attempt + 1u; info->num_rows = rows; }
-    free(coeff);
-    free(res);
+    free(slots);
     *out = f;
     return RB_OK;
   }
-  free(coeff);
-  free(res);
+  free(slots);
   free(f);
   return st == RB_OK ? RB_E_CONSTRUCT : st;
 }
@@ -237,7 +250,7 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
 int rb_contains(const rb_filter *f, uint64_t hash) {
   if (f->num_rows == 0) return 0;
   uint32_t r = f->fp_bits;
-  rb_eq eq = rb_derive(hash, f->attempt, f->num_rows - RB_WIDTH + 1u, r);
+  rb_eq eq = rb_derive(hash, f->salt, f->num_rows - RB_WIDTH + 1u, r);
   unsigned off = (unsigned)(eq.start & 63u);
   /* start <= num_rows - 64, so when off > 0 the next block exists: no read past the payload. */
   const uint8_t *blk = f->payload + (eq.start >> 6) * r * 8u;
@@ -251,7 +264,24 @@ int rb_contains(const rb_filter *f, uint64_t hash) {
 }
 
 void rb_contains_many(const rb_filter *f, const uint64_t *hashes, size_t n, uint8_t *out) {
-  for (size_t i = 0; i < n; i++) out[i] = (uint8_t)rb_contains(f, hashes[i]);
+  if (f->num_rows == 0 || n < 2 * RB_CHUNK) { /* tiny batches: nothing to overlap */
+    for (size_t i = 0; i < n; i++) out[i] = (uint8_t)rb_contains(f, hashes[i]);
+    return;
+  }
+  /* Prefetch the first words of the two blocks a probe reads for the NEXT chunk while answering the current one. */
+  uint32_t r = f->fp_bits;
+  uint64_t num_starts = f->num_rows - RB_WIDTH + 1u;
+  size_t i = 0;
+  for (; i + 2 * RB_CHUNK <= n; i += RB_CHUNK) {
+    for (size_t j = 0; j < RB_CHUNK; j++) {
+      rb_eq eq = rb_derive(hashes[i + RB_CHUNK + j], f->salt, num_starts, r);
+      const uint8_t *blk = f->payload + (eq.start >> 6) * r * 8u;
+      rb_prefetch(blk);
+      rb_prefetch(blk + 8u * r);
+    }
+    for (size_t j = 0; j < RB_CHUNK; j++) out[i + j] = (uint8_t)rb_contains(f, hashes[i + j]);
+  }
+  for (; i < n; i++) out[i] = (uint8_t)rb_contains(f, hashes[i]);
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -317,6 +347,7 @@ rb_status rb_from_buffer(const void *buf, size_t len, int verify_payload, rb_fil
   f->fp_bits = r;
   f->attempt = rb_load_le32(h + 40);
   f->payload = payload;
+  f->salt = rb_attempt_salt(f->attempt);
   *out = f;
   return RB_OK;
 }

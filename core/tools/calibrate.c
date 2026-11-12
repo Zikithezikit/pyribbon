@@ -22,18 +22,16 @@ int main(int argc, char **argv) {
     int trials = (int)(budget / (double)m);
     if (trials > 6000) trials = 6000;
     if (trials < 300) trials = 300;
-    uint64_t *coeff = (uint64_t *)calloc((size_t)m, sizeof *coeff);
-    uint32_t *res = (uint32_t *)calloc((size_t)m, sizeof *res);
+    rb_slot *slots = (rb_slot *)calloc((size_t)m, sizeof *slots);
     size_t *js = (size_t *)malloc((size_t)trials * sizeof *js);
     uint64_t state = UINT64_C(0x1234567) + (uint64_t)k;
     for (int t = 0; t < trials; t++) {
-      memset(coeff, 0, (size_t)m * sizeof *coeff);
-      memset(res, 0, (size_t)m * sizeof *res);
+      memset(slots, 0, (size_t)m * sizeof *slots);
       size_t j = 0;
       for (; j < m; j++) {
         state += RB_GAMMA;
-        rb_eq eq = rb_derive(rb_mix64(state), 0, m - RB_WIDTH + 1u, 32);
-        if (!rb_band_insert(coeff, res, eq.start, eq.coeff, eq.fp)) break;
+        rb_eq eq = rb_derive(rb_mix64(state), rb_attempt_salt(0), m - RB_WIDTH + 1u, 32);
+        if (!rb_band_insert(slots, eq.start, eq.coeff, eq.fp)) break;
       }
       js[t] = j;
     }
@@ -43,8 +41,7 @@ int main(int argc, char **argv) {
     printf("%3d %10llu %7d %8.4f %8.4f %8.4f %8.4f   %7.2f%% %7.2f%% %7.2f%% %7.2f%%\n", k, (unsigned long long)m, trials,
            f50, f05, f03, f01, 100 * (1 / f50 - 1), 100 * (1 / f05 - 1), 100 * (1 / f03 - 1), 100 * (1 / f01 - 1));
     fflush(stdout);
-    free(coeff);
-    free(res);
+    free(slots);
     free(js);
   }
   return 0;

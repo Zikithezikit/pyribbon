@@ -99,7 +99,7 @@ static void test_vectors_hash(void) {
     CHECK_EQ(rb_hash_i64(vec_i64_tbl[i].value, vec_i64_tbl[i].seed), vec_i64_tbl[i].hash);
   for (size_t i = 0; i < sizeof vec_derive_tbl / sizeof *vec_derive_tbl; i++) {
     const vec_derive *v = &vec_derive_tbl[i];
-    rb_eq eq = rb_derive(v->h, v->attempt, v->rows - 63u, v->r);
+    rb_eq eq = rb_derive(v->h, rb_attempt_salt(v->attempt), v->rows - 63u, v->r);
     CHECK_EQ(eq.start, v->start);
     CHECK_EQ(eq.coeff, v->coeff);
     CHECK_EQ(eq.fp, v->fp);
