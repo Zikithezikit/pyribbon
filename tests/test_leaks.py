@@ -59,9 +59,11 @@ def test_rss_probe_sees_a_deliberate_leak() -> None:
 
     def leak(k: int) -> None:
         for _ in range(k):
-            hoard.append(b"\xaa" * 300_000)  # above the malloc mmap threshold: fresh pages, never recycled heap holes
+            # above glibc's maximum dynamic mmap threshold (32 MB): always fresh pages, never recycled heap holes,
+            # whatever earlier tests allocated and freed
+            hoard.append(b"\xaa" * 33_000_000)
 
-    assert growth(leak, 20) > LIMIT  # 6 MB retained must register, or the thresholds below mean nothing
+    assert growth(leak, 2) > LIMIT  # 66 MB retained must register, or the thresholds below mean nothing
     hoard.clear()
 
 
