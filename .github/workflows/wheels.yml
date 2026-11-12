@@ -1,0 +1,38 @@
+name: Wheels
+
+# Builds and tests wheels only. Nothing here uploads to PyPI or creates a release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"
+      - "core/**"
+      - "setup.py"
+      - "pyproject.toml"
+      - "MANIFEST.in"
+      - ".github/workflows/wheels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      # Configuration (identifiers, archs, test command) lives in [tool.cibuildwheel] in pyproject.toml. The first abi3
+      # wheel (cp311-abi3) is built once and re-tested on 3.12-3.14; cp310 is built non-limited.
+      - uses: pypa/cibuildwheel@v4.3.5
+        env:
+          CIBW_ARCHS_LINUX: auto
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
