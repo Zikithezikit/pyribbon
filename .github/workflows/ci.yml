@@ -76,6 +76,18 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: pytest -m "not slow"
 
+  bench-smoke:
+    name: Benchmark harness (--quick)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install -e '.[bench]'
+      - name: Quick benchmark run (numbers are not meaningful; this keeps the harness working)
+        run: python benchmarks/bench.py --quick --out-dir "$RUNNER_TEMP/bench"
+
   sdist:
     name: sdist builds with a plain C compiler
     runs-on: ubuntu-latest

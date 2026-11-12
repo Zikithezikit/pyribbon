@@ -330,12 +330,12 @@ bad input. Errors for wrong key types are `TypeError`; for out-of-range argument
 
 ## 8. Packaging
 
-* Python ≥ 3.10; MIT licence, confirmed (`license-files = ["LICENSE", "LICENSES/xxhash.txt"]`); `src/pyribbon/`
+* Python ≥ 3.10; MIT licence, confirmed (`license-files = ["LICENSE", "LICENSES/*"]`); `src/pyribbon/`
   layout and `[tool.ruff]`/`[tool.mypy]` blocks matching your other repos; `dependencies = []`.
 * Build backend setuptools ≥ 77; `MANIFEST.in` puts `core/` (including the Makefile and vendored header) in the sdist,
   so `pip install` from the sdist needs only a C compiler.
 * **Wheels via cibuildwheel 4.x:** `skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"`; macOS `x86_64` and `arm64`;
-  Windows `AMD64` (and `ARM64` if the MSVC fallback tests pass); manylinux_2_28 and musllinux_1_2. Result per platform:
+  Windows `AMD64` only (ARM64 is untested); manylinux_2_28 and musllinux_1_2. Result per platform:
   a `cp310` wheel and a `cp311-abi3` wheel (R§12). Wheel tests run `pytest` against the installed wheel. Sanitizer
   builds are a **separate CI job** on a plain runner, not inside cibuildwheel. **Not yet verified:** no wheel has been built
   end to end and nothing has been built on macOS or Windows (R§12); the first CI run is where that gets proven.
@@ -344,18 +344,21 @@ bad input. Errors for wrong key types are `TypeError`; for out-of-range argument
 ## 9. Repository layout and `make` targets
 
 ```
-core/{include,src,tests,fuzz,vendor}   C library + C unit tests + libFuzzer harness; own Makefile
+core/{include,src,tests,tools,fuzz,vendor}   C library, C unit tests, calibration/report tools, loader fuzz harness; own Makefile
 src/pyribbon/{__init__.py,_ribbon.c,_ribbon.pyi,py.typed}
-tests/ (pytest + hypothesis)   benchmarks/   docs/   examples/
+tests/ (pytest + hypothesis + spec_reference.py)   benchmarks/ (bench.py, research/)   docs/ (generated results)
 Makefile pyproject.toml setup.py MANIFEST.in LICENSE README.md CHANGELOG.md RESEARCH.md DESIGN.md
 ```
 
 `make`: `venv` · `install-dev` · `test` (C unit + pytest) · `lint` (ruff check + format check) · `docstyle` · `typecheck`
-(mypy strict + stubtest) · `check` (lint, docstyle, typecheck, test) · `c-test` · `c-asan` · `c-fuzz` · `bench` (writes
-`docs/benchmark.png` and a table) · `build` (sdist, wheel, `twine check`) · `clean`. Docstring checks use ruff's `D` rules
+(mypy strict + stubtest) · `check` (lint, docstyle, typecheck, test) · `c-test` · `c-asan` · `c-portable` · `c-fuzz` ·
+`ovh-sweep` / `calibrate` (the sizing table) · `fpr-report` / `stats` (measured false-positive rates and failure rates,
+`docs/measurements.md`) · `bench` (writes `docs/benchmark.png`, `.md` and `.json`) · `build` (sdist, wheel, `twine check`) · `clean`. Docstring checks use ruff's `D` rules
 with `convention = "google"` (the same rules as your `pydocstyle --convention=google`, one tool fewer).
 
 ## 10. Testing and evidence plan (maps to your requirements)
+
+All rows are implemented (`tests/`, `core/tests/`, `core/tools/`); results are in `docs/measurements.md` and `docs/benchmark.md`.
 
 | Requirement | How |
 |---|---|
@@ -363,7 +366,7 @@ with `convention = "google"` (the same rules as your `pydocstyle --convention=go
 | Measured FPR ≈ 2^-r | for r ∈ {1,4,8,12,16}: ≥ 1e8 disjoint negative probes for r ≥ 8 (≥ 1e7 for r < 8), assert the count lies within 5σ of the binomial mean; test structured keys (sequential ints, short strings, bit patterns) as well as random; **report every number** |
 | Construction behavior | measure failure rate vs `overhead` for n ∈ {1e2..1e7} (thousands of trials at small n), fit and *replace* ε(n) if §2's formula misses its acceptance bound; failure raises `ConstructionError` (forced by `overhead=0.0, max_attempts=1`); duplicates and the empty set |
 | Hash and derivation | XXH3 outputs checked against the `xxhash` PyPI package as a test oracle (dev dependency only); known-answer vectors for `H` and `(start, coeff, fp)` committed as the format spec; avalanche test on the derivation words |
-| Serialization | round-trip; every truncation length; single-bit flips over the header (must be rejected, by rules 1-5 or the checksum); payload flips with `verify=True` (rejected) and `verify=False` (still memory-safe); hand-crafted hostile headers (huge `num_rows`, overflowing sizes); libFuzzer on `rb_from_buffer` + `rb_contains` under ASan/UBSan; the same corpus run under pytest |
+| Serialization | round-trip; every truncation length; single-bit flips over the header (must be rejected, by a field rule or the checksum); a differential fuzz of the loader against the independent Python reference (accept/reject decision and error class agree on every mutant); payload flips with `verify=True` (rejected) and `verify=False` (still memory-safe); hand-crafted hostile headers (huge `num_rows`, overflowing sizes); libFuzzer on `rb_from_buffer` + `rb_contains` under ASan/UBSan; the same corpus run under pytest |
 | Sanitizers, warnings | ASan/UBSan for the C tests and the extension in a separate CI job; `-Werror` set above; forced `RB_PORTABLE=1` build |
 | Memory | build/free and load/free in a loop, assert RSS growth under a threshold; ASan leak check on the C tests |
 | Concurrency | threads querying one filter (`contains` and `contains_many`), results compared to a single-thread run; threads building different filters; GIL-release timing check |
@@ -392,9 +395,9 @@ with `convention = "google"` (the same rules as your `pydocstyle --convention=go
 ## 12. CI quality gates
 
 Lint (ruff), strict mypy plus stubtest on the typed surface, Google-style docstring checks, pytest on 3.10 to 3.14,
-a sanitizer job (ASan + UBSan, C and extension), a C-warnings-as-errors job (`-Werror`, forced portable fallback), a
-`libFuzzer` smoke job (time-boxed) over the loader, an sdist-builds-with-plain-cc job, a cibuildwheel job (build and
-test, no upload), and a benchmark smoke run. Existing conventions kept: actions/checkout and setup-python, `permissions:
+Windows and macOS test jobs, a sanitizer job (ASan + UBSan, C and extension), a C-warnings-as-errors job (`-Werror`, gcc and
+clang, forced portable fallback), a loader fuzz job (libFuzzer where available), an sdist-builds-with-plain-cc job, a
+cibuildwheel job (build and test, no upload), a benchmark smoke run (`--quick`), and a weekly job for the slow statistical tests. Existing conventions kept: actions/checkout and setup-python, `permissions:
 contents: read`.
 
 ## 13. Roadmap (not v0.1)
@@ -405,17 +408,21 @@ contents: read`.
 3. **BuRR** (0.06-1.4% overhead, but bucket sort, rollback, per-bucket thresholds and 4-layer recursion) and Balanced.
 4. SIMD queries (AVX512 POPCNT / 8-bit interleaving), parallel build (bump `w` positions per
    block to cut the system into independent blocks, R§7).
-5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor; `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
+5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor (also enables isolated subinterpreters); 32-bit and big-endian CI; `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
 6. Cache effect of sorted vs random insertion for standard ribbon (not measured in the papers, R§4).
 
 ## 14. Risks and open questions
 
-* The ε(n) fit rests on RocksDB's simulation (extrapolated beyond 2^17 slots) and [R Table 1]; v0.1 depends on Phase 2
-  confirming it. The retry-with-growth rule bounds the damage but not the speed.
+* The sizing table is measured on the real core up to 2^24 slots (n ≈ 1.4e7); above that it is extrapolated at the measured
+  slope and unmeasured. The retry-with-growth rule bounds the damage but not the speed.
 * XXH3 is vendored from a 7.5k-line header; I trust its stability promise and test vectors but have not audited it.
 * Build memory: the banding array takes 16 bytes/slot (about 18 bytes/key at the w=64 overhead) plus 8 bytes/key for `H`,
   roughly 26 bytes/key, about 2.6 GB at `n = 1e8`, until sharding exists.
-* Windows/macOS builds, cibuildwheel and the MSVC fallbacks are unverified (R§12).
+* **Never built or run here:** Windows/MSVC, macOS, 32-bit, big-endian, free-threaded CPython, cibuildwheel itself (no container
+  runtime), and the libFuzzer build (no clang here; only the same harness with the built-in mutator ran). The CI workflows pass
+  `actionlint` but have not run.
+* An independent review of the C core and the extension found one high-severity extension bug (an overflowing length-hint
+  preallocation) and several lower-severity items; all actionable ones are fixed and regression-tested (§6).
 * I read RocksDB-derived code through research notes; the implementation derives every step from [R]/[B] (R§9, R§10),
   uses no RocksDB constants and no pleat/ribbonGo test vectors, and cites its sources in code comments.
 * Patents on ribbon filters were not searched (R§9).
