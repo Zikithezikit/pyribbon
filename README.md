@@ -17,10 +17,8 @@ Space, build time and lookup time against the number of keys, measured on one ma
 
 ## Install
 
-pyribbon is not on PyPI yet. Install it from a checkout; a C compiler is the only build requirement:
-
 ```bash
-pip install .
+pip install pyribbon
 ```
 
 It needs Python 3.10 or newer. The wheels workflow (`.github/workflows/wheels.yml`) uses cibuildwheel, but no wheel has

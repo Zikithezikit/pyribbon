@@ -336,7 +336,8 @@ supported (the keys are hashed as they stream into the temporary array; a `__len
   layout and `[tool.ruff]`/`[tool.mypy]` blocks matching your other repos; `dependencies = []`.
 * Build backend setuptools ≥ 77; `MANIFEST.in` puts `core/` (including the Makefile and vendored header) in the sdist,
   so `pip install` from the sdist needs only a C compiler.
-* Wheels via cibuildwheel 4.x: `skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"`; macOS `x86_64` and `arm64`;
+* Wheels via cibuildwheel 4.x: `skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"`; macOS `x86_64` (on the Intel runner)
+  and `arm64` (on the Apple Silicon runner, cibuildwheel's default `auto` per runner);
   Windows `AMD64` only (ARM64 is untested); manylinux_2_28 and musllinux_1_2. Result per platform:
   a `cp310` wheel and a `cp311-abi3` wheel (R§12). Wheel tests run `pytest` against the installed wheel. Sanitizer
   builds run as a separate CI job on a plain runner, outside cibuildwheel. Verified in CI on 2026-11-12: the wheels build and pass the

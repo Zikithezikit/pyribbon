@@ -56,3 +56,18 @@ def test_no_other_workflow_can_publish(name: str) -> None:
     text = (WORKFLOWS / name).read_text()
     for word in PUBLISHING:
         assert word not in text, f"{name} must not contain {word!r}; publishing belongs to release.yml"
+
+
+def test_macos_archs_are_not_pinned_while_two_runners_build_wheels() -> None:
+    """The release check merges the wheel artifacts into one directory. Pinning both macOS archs while the matrix
+    has two macOS runners makes each runner emit the same wheel filenames, and the merge corrupts them (this is
+    how the v0.1.0 release failed: twine could not read a merged wheel)."""
+    matrix = load("wheels.yml")["jobs"]["wheels"]["strategy"]["matrix"]["os"]
+    macos_runners = [os for os in matrix if str(os).startswith("macos")]
+    if len(macos_runners) > 1:
+        pyproject = (WORKFLOWS.parent.parent / "pyproject.toml").read_text()
+        wheels_yml = (WORKFLOWS / "wheels.yml").read_text()
+        assert "[tool.cibuildwheel.macos]" not in pyproject, (
+            "cibuildwheel's default (auto) builds each runner's native arch"
+        )
+        assert "CIBW_ARCHS_MACOS" not in wheels_yml, "cibuildwheel's default (auto) builds each runner's native arch"

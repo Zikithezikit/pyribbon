@@ -80,8 +80,9 @@ test-requires = ["pytest", "hypothesis", "xxhash"]  # numpy interop tests skip w
 test-sources = ["tests"]
 test-command = "pytest -m \"not slow\" tests"  # double quotes: Windows cmd does not understand single quotes
 
-[tool.cibuildwheel.macos]
-archs = ["x86_64", "arm64"]
+# macOS archs are left at cibuildwheel's default (auto): the wheels matrix builds x86_64 on the
+# macos-15-intel runner and arm64 on the macos-latest runner. Pinning both archs here would make
+# each runner emit the same wheel filenames, and the release check's artifact merge would collide.
 
 [tool.cibuildwheel.windows]
 archs = ["AMD64"]
