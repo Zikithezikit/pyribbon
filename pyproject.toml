@@ -37,7 +37,7 @@ Changelog = "https://github.com/Zikithezikit/pyribbon/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # xxhash is only a test oracle for the vendored XXH3 (never imported by the package).
-dev = ["pytest", "hypothesis", "xxhash", "numpy", "ruff", "mypy", "build", "twine"]
+dev = ["pytest", "hypothesis", "xxhash", "numpy", "pyyaml", "ruff", "mypy", "build", "twine"]
 bench = ["pyfusefilter", "rbloom", "matplotlib", "numpy", "xxhash"]
 
 [tool.setuptools]

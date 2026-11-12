@@ -32,9 +32,10 @@ portable: clean test
 # (same harness, deterministic PRNG, under ASan/UBSan) runs for a fixed number of iterations.
 FUZZ_ITERS ?= 2000000
 fuzz: | $(B)
-	@if command -v clang >/dev/null 2>&1 && echo 'int main(void){return 0;}' | clang -x c -fsanitize=fuzzer - -o /dev/null 2>/dev/null; then \
+	@if command -v clang >/dev/null 2>&1 && echo 'int LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n){(void)d;(void)n;return 0;}' | clang -x c -fsanitize=fuzzer - -o /dev/null 2>/dev/null; then \
 	  clang $(STD) -O1 -g -Iinclude -Isrc -isystem vendor -fsanitize=fuzzer,address,undefined fuzz/fuzz_load.c $(LIB) -o $(B)/fuzz_load && \
-	  ./$(B)/fuzz_load -max_total_time=60 -max_len=4096 fuzz/corpus; \
+	  rm -rf $(B)/corpus && mkdir -p $(B)/corpus && cp fuzz/corpus/* $(B)/corpus/ && \
+	  ./$(B)/fuzz_load -max_total_time=60 -max_len=4096 $(B)/corpus; \
 	else \
 	  echo "clang/libFuzzer not found: running the built-in mutation driver"; \
 	  $(CC) $(STD) -O1 -g -Iinclude -Isrc -isystem vendor -fsanitize=address,undefined -fno-sanitize-recover=undefined -DFUZZ_DRIVER fuzz/fuzz_load.c $(LIB) -o $(B)/fuzz_driver && \
