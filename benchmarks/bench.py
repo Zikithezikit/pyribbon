@@ -80,6 +80,7 @@ class Impl:
     build: Callable[[list[Any], str], Any]
     size_bits: Callable[[Any], float]
     batch: Callable[[Any, list[Any]], Any] | None = None  # None: no batch API, the per-key loop is measured
+    batch_array: Callable[[Any, list[Any]], Any] | None = None  # int regime only: batch over an array('q') of the keys
     count_fp: Callable[[Any, list[Any], dict[str, Any]], int] | None = None
     diag: bool = False  # diagnostic variant: reported in the diagnostics section, not in the headline tables
 
@@ -275,6 +276,25 @@ def _hash_str(s: str) -> int:
         return int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "little") >> 1
 
 
+_ARRAY_MEMO: list[tuple[list[Any], Any]] = []
+
+
+def _as_int_array(keys: list[Any]) -> Any:
+    """``array('q')`` of int keys, converted once per list: the conversion happens in the untimed warm-up call.
+
+    Callers holding the keys as an array already (numpy, array.array) pay nothing for it, which is the point of the
+    integer-buffer fast path; building the array from a Python list would otherwise be charged to the batch.
+    """
+    import array
+
+    for src, arr in _ARRAY_MEMO:
+        if src is keys:
+            return arr
+    arr = array.array("q", keys)
+    _ARRAY_MEMO[:] = [*_ARRAY_MEMO[-3:], (keys, arr)]
+    return arr
+
+
 def _load_pyribbon() -> Lib:
     import pyribbon
     from pyribbon import RibbonFilter
@@ -288,6 +308,7 @@ def _load_pyribbon() -> Lib:
             build=lambda keys, regime, b=b: RibbonFilter(keys, fp_bits=b),
             size_bits=lambda f: 8.0 * f.size_in_bytes,
             batch=lambda f, keys: f.contains_many(keys),
+            batch_array=lambda f, keys: f.contains_many(_as_int_array(keys)),
             count_fp=lambda f, chunk, cache: sum(f.contains_many(chunk)),
         )
         for b in (8, 16)
@@ -546,6 +567,11 @@ def run_cell(regime: str, n: int, libs: list[Lib], cfg: Config, say: Callable[[s
             }
             call = (lambda ks, f=f, b=impl.batch: b(f, ks)) if impl.batch else (lambda ks, f=f: [k in f for k in ks])
             r["batch_kps"] = batch_stats(call, mem_q, non_q, cfg.repeats)
+            if impl.batch_array is not None and regime == "int":
+                alt = impl.batch_array
+                if alt(f, mem_q) != [True] * len(mem_q):
+                    raise RuntimeError(f"{impl.label}: array batch disagrees with the list batch")
+                r["batch_array_kps"] = batch_stats(lambda ks, f=f, b=alt: b(f, ks), mem_q, non_q, cfg.repeats)
             out["filters"][impl.key] = r
             built.append((impl, f))
             say(
@@ -719,6 +745,11 @@ def report_markdown(meta: dict[str, Any], results: list[dict[str, Any]]) -> str:
                     [lab, f"{n:,}", kind]
                     + [g(v["batch_kps"][k]["median"] / 1e6) for k in ("member", "non_member", "mixed")]
                 )
+                if "batch_array_kps" in v:
+                    ba.append(
+                        [lab, f"{n:,}", "`contains_many` over an int `array('q')`"]
+                        + [g(v["batch_array_kps"][k]["median"] / 1e6) for k in ("member", "non_member", "mixed")]
+                    )
         out += [
             "",
             f"## Results: {title}",
