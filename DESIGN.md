@@ -1,15 +1,14 @@
-# DESIGN (v0.1 proposal, awaiting approval)
+# DESIGN (v0.1, approved 2026-11-12)
 
-Status: **proposal; no implementation code exists.** Written 2026-11-12. Evidence and citations live in
-RESEARCH.md. `R§n` points to a section of RESEARCH.md; a plain `§n` points inside this file. Anything marked **[you decide]** is public-facing or
-irreversible and needs your approval; everything else is a default I picked and will change on request.
+Status: **approved on 2026-11-12; implementation in progress.** Evidence and citations live in RESEARCH.md.
+`R§n` points to a section of RESEARCH.md; a plain `§n` points inside this file. Resolved decisions are listed in §15.
 
 ## 0. Phase 0 record
 
 * **Name.** `https://pypi.org/pypi/pyribbon/json` returned HTTP 404 on 2026-11-12, and a grep of the full PyPI simple
   index (938,319 projects) for "ribbon" found 21 unrelated names, none `pyribbon`. The name is free **today**;
   re-check at upload time (PyPI names can be taken at any moment). The unrelated GitHub project called pyribbon
-  (a Sonus/Ribbon SBC REST client) is not on PyPI under that name. **[you decide]**: keep `pyribbon`.
+  (a Sonus/Ribbon SBC REST client) is not on PyPI under that name. **Decided 2026-11-12: keep `pyribbon`.**
 * **Gap.** No Python ribbon-filter package or BuRR wrapper found on PyPI or GitHub. Ribbon implementations exist in
   Rust (`pleat`, `ribbon-filter`), Go (`ribbonGo`), C++ (RocksDB, `fastfilter_cpp`, `lorenzhs/BuRR`) (R§10).
 * **Corrections to the brief.** (1) `pyxorfilter` exists but is **unusable on Python 3.13/3.14** (no wheel, broken
@@ -28,16 +27,24 @@ fails but gives FP = p + (1-p)·2^-r, can exceed 2^-r, and has undetectable FP v
 ribbon is the simpler thing to *prove* correct with tests.
 
 Why w = 64: one machine word, shifts and parity are single instructions, and the authors advise 32 or 64 on 64-bit
-machines (R§3). **The cost, stated up front:** at w = 64 the overhead needed for a 5%-per-attempt failure rate grows
-with `log n` (R§5, R§9), so ~5% at 1e3 keys but ~12% at 1e6 and ~17.6% at 1e8, versus 4.8% (1e6) and 7.3% (1e8) for w = 128.
-At 1e6 keys that is roughly where binary-fuse filters already are (Fuse8 measured 9.51 bits/key at 1e5, R§12), so
-**v0.1 is expected to beat Xor and Bloom clearly, and to be only modestly smaller than Fuse at large n.** The
-benchmark will say so. Mitigation is on the roadmap (w = 128 or hard sharding) and the format already carries the
-width, so adding it later is not a format break. **[you decide]**: if you would rather have the large-n win in v0.1,
-w = 128 (two-word core) is the change to ask for.
+machines (R§3). **Decided 2026-11-12 after a measurement** (`benchmarks/research/`, a simulation of the paper's
+elimination, i7-7700): overhead needed for 95% per-attempt success, w = 64 vs w = 128:
+
+| slots `m` | 2^10 | 2^14 | 2^17 | 2^20 | 2^22 |
+|---|---:|---:|---:|---:|---:|
+| w = 64 | 4.7% | 6.9% | 9.6% | 11.5% | 12.7% |
+| w = 128 | 2.2% | 2.7% | 3.7% | 4.6% | 5.5% |
+
+(These agree with [R Table 1] and RocksDB's tables where they overlap: 4.7% vs 4.9% at 2^10, 3.8% vs 3.8% at 50%
+success and 2^14. RocksDB's extrapolation past 2^17 overstates the w = 64 overhead: ~14% predicted vs 12.7% measured
+at 2^22.) At r = 8 and n = 1e6, w = 64 costs about 8.9 bits/key, **6% below Fuse8's measured 9.51**, so ribbon w = 64
+still wins on space at every size I tested; w = 128 would save a further ~6% of bits per key but its insertion was
+2-3x slower in my naive generic code, and it needs a two-word core with 128-bit shifts in the query. Not worth it for
+v0.1; w = 128 and hard sharding lead the roadmap, and the format already carries the width, so adding them is not a
+format break. **The honest caveat for the README:** the space advantage over Fuse is single-digit percent at large n.
 
 Deferred to the roadmap (§13): BuRR, Balanced, homogeneous, w = 128, sharding, SIMD, parallel build, fractional r,
-smash, free-threaded wheels, pickle support.
+smash, free-threaded wheels.
 
 ## 2. Parameters
 
@@ -46,13 +53,13 @@ smash, free-threaded wheels, pickle support.
 | width `w` | 64 | fixed (stored in header as `width_log2`) | §1 |
 | `fp_bits` r | 8 | 1..32 | FP ≈ 2^-r. 8 matches Xor8/Fuse8 (0.39%) for like-for-like benchmarks; ≤ 32 keeps the per-slot result in a `uint32_t` |
 | rows `m` | `roundup64(ceil(n·(1+ε(n))))`, min 128 | multiple of 64 | the interleaved layout needs `m % 64 == 0`; `m ≥ 2w` so that the number of start positions `m-w+1 > w` and every window has a following block (R§9) |
-| overhead ε(n) | `max(0.05, 0.07 + 0.0083·(log2 n − 14))` | `overhead=` override | my fit to the w=64, 95%-per-attempt column of R§9 (4.9, 6.6, 9.3, 12.0, 14.8, 17.6% at n = 1e3..1e8) and to [R Table 1] (R§5). **A fit to other people's numbers**: Phase 2 re-measures it. Acceptance: measured per-attempt failure ≤ 10% and mean attempts ≤ 1.15 for n in {1e2..1e7} |
+| overhead ε(n) | table interpolated linearly in `log2 n`, from 6.1% at 2^7 down to 5.0% at 2^10 and up to 13.0% at 2^22; beyond 2^22 +0.6 pp per doubling | `overhead=` override | the measured 95% points of the width study plus a 0.3 pp margin. **Initial table**: Phase 2 regenerates it from the real core (`make ovh-sweep`). Values above 2^22 slots are extrapolated from the measured slope (0.56 pp/doubling between 2^20 and 2^22) and unmeasured. Acceptance: measured per-attempt failure ≤ 7% and mean attempts ≤ 1.1 for n in {1e2..1e7} |
 | `max_attempts` | 32 | 1..255 | with 5% per-attempt failure, 32 attempts is far below any realistic failure rate; RocksDB uses 256 with a Bloom fallback (R§9); we raise instead |
 | retry policy | new seed every attempt; from the 3rd attempt also grow `m` by `(w+1)/w` | | reseeding is the primary mechanism; growth is the paper's alternative [R p9] and guarantees termination even if the fit is wrong for some `n` (R§5) |
 | `seed` | 0 | 0..2^64-1 | user domain separation; stored in the header |
 
-Predicted size (**prediction from the paper tables, not a measurement**): r = 8 gives `8·(1+ε)` bits/key, i.e. ≈ 8.4 at
-1e3, 8.7 at 1e5, 9.0 at 1e6, before rounding `m` up to 64. Tiny sets are padded to the 128-row minimum
+Predicted size (**a prediction from the width study, not yet a measurement of the library**): r = 8 gives `8·(1+ε)`
+bits/key, i.e. ≈ 8.4 at 1e3, 8.8 at 1e5, 8.9 at 1e6, before rounding `m` up to 64. Tiny sets are padded to the 128-row minimum
 (128 rows × 8 bits = 128 bytes for r = 8) and the README will say so.
 
 **On failure** the build raises `ConstructionError` after `max_attempts`; a filter that did not pass banding is
@@ -206,8 +213,9 @@ cannot define `__contains__` as a type slot. meson-python is rejected (needs a V
 and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
 
 * **Python 3.10.** `Py_buffer` entered the stable ABI in 3.11, so 3.10 gets its own non-limited wheel from the same
-  source (about 10 lines of conditional logic in `setup.py`). 3.10 reached end of life on 2026-10-01; I keep it because the
-  brief says 3.10+, and dropping it later removes that wheel and the conditional. **[you decide]**: keep or drop 3.10.
+  source (about 10 lines of conditional logic in `setup.py`). 3.10 reached end of life on 2026-10-01, but **decided to keep it
+  (2026-11-12)** after checking pypistats (past month): 3.10 is still 12.8% of numpy's downloads and 16.7% of cryptography's.
+  The cost is one extra wheel per platform; dropping it later removes that wheel and the conditional.
 * **Free-threaded** (3.14t) has no abi3 and I will not declare `Py_MOD_GIL_NOT_USED` before testing it: v0.1 skips
   `*t-*` wheels, so a free-threaded interpreter builds from the sdist and re-enables the GIL on import. Roadmap item.
 * **GIL.** Single-key `__contains__` never releases the GIL (the save/restore costs more than the ~30 ns of work, R§12).
@@ -228,7 +236,7 @@ and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
 * **Types.** Ship `py.typed` and `_ribbon.pyi` (stubs for the C module), checked with `mypy.stubtest` in CI so the stubs
   cannot drift from the compiled module.
 
-## 7. Python API sketch (immutable filter) **[you decide: public API and names]**
+## 7. Python API (immutable filter; names decided by me as best practice, approved 2026-11-12)
 
 ```python
 class RibbonFilter:
@@ -246,6 +254,8 @@ class RibbonFilter:
     def bits_per_key(self) -> float: ...       # 8 * size_in_bytes / len(self); 0.0 for an empty filter
     @property
     def fp_bits(self) -> int: ...
+    def __repr__(self) -> str: ...             # RibbonFilter(keys=1000, fp_bits=8, size_in_bytes=1146)
+    def __reduce__(self) -> ...: ...           # pickle and copy work: rebuilt from to_bytes()
 
 Key = bytes | bytearray | memoryview | str | int       # §3.1
 class RibbonError(Exception): ...
@@ -261,7 +271,7 @@ bad input. Errors for wrong key types are `TypeError`; for out-of-range argument
 
 ## 8. Packaging
 
-* Python ≥ 3.10; MIT licence (`license-files = ["LICENSE", "LICENSES/xxhash.txt"]`) **[you decide]**; `src/pyribbon/`
+* Python ≥ 3.10; MIT licence, confirmed (`license-files = ["LICENSE", "LICENSES/xxhash.txt"]`); `src/pyribbon/`
   layout and `[tool.ruff]`/`[tool.mypy]` blocks matching your other repos; `dependencies = []`.
 * Build backend setuptools ≥ 77; `MANIFEST.in` puts `core/` (including the Makefile and vendored header) in the sdist,
   so `pip install` from the sdist needs only a C compiler.
@@ -336,7 +346,7 @@ contents: read`.
 3. **BuRR** (0.06-1.4% overhead, but bucket sort, rollback, per-bucket thresholds and 4-layer recursion) and Balanced.
 4. SIMD queries (AVX512 POPCNT / 8-bit interleaving), prefetch pipeline for batches, parallel build (bump `w` positions per
    block to cut the system into independent blocks, R§7).
-5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor; pickle support; `bytearray`-safe loading.
+5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor; `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
 6. Cache effect of sorted vs random insertion for standard ribbon (not measured in the papers, R§4).
 
 ## 14. Risks and open questions
@@ -351,11 +361,13 @@ contents: read`.
   uses no RocksDB constants and no pleat/ribbonGo test vectors, and cites its sources in code comments.
 * Patents on ribbon filters were not searched (R§9).
 
-## 15. Decisions for you
+## 15. Decisions (resolved 2026-11-12)
 
-1. Keep the name `pyribbon` (free on PyPI today; re-check before upload).
-2. Licence MIT (+ the BSD-2 xxHash notice for the vendored hash).
-3. Public API and names in §7 (`RibbonFilter`, `contains_many`, `from_buffer(verify=)`, the three exception classes).
-4. Width: w = 64 in v0.1 (as proposed) or w = 128 now (§1).
-5. Keep Python 3.10 (extra wheel) or drop it (§6).
-6. Benchmark `pyfusefilter` instead of `pyxorfilter` (§0, §11).
+1. Name `pyribbon`: **kept** (free on PyPI on 2026-11-12; re-check before any upload).
+2. Licence: **MIT**, plus the BSD-2 xxHash notice for the vendored hash.
+3. Public API and names (§7): left to me, "use best practice". Choices: `RibbonFilter`, keyword-only options, `list[bool]`
+   from `contains_many`, `TypeError` for unsupported key types (never a silent `False`), `FormatError` that is also a
+   `ValueError`, `__repr__`, `__reduce__` so pickle, `copy` and multiprocessing work.
+4. Width: **w = 64**, decided by the width study (§1). w = 128 and sharding lead the roadmap.
+5. Python 3.10: **kept**, decided by the download shares (§6).
+6. Benchmark `pyfusefilter` instead of `pyxorfilter`: **yes** (§0, §11).
