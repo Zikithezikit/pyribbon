@@ -2,40 +2,51 @@
 
 [![CI](https://github.com/Zikithezikit/pyribbon/actions/workflows/ci.yml/badge.svg)](https://github.com/Zikithezikit/pyribbon/actions/workflows/ci.yml)
 
-Ribbon filters for Python. A ribbon filter answers "is this key in the set?" for a **fixed** set of keys: it never
-says "no" for a key that is in the set, and says "yes" for a key that is not with a probability you choose
-(`2**-fp_bits`). It needs fewer bits per key than a Bloom filter at the same false-positive rate. The core is C11, the
-Python layer is a thin extension, and there are no runtime dependencies.
+Ribbon filters for Python. A ribbon filter answers "is this key in the set?" for a fixed set of keys. It never says
+"no" for a key that is in the set. For a key that is not, it says "yes" with a probability you choose (`2**-fp_bits`).
+It needs fewer bits per key than a Bloom filter at the same false-positive rate. The core is C11, the Python layer is a
+thin extension, and there are no runtime dependencies.
 
 ```python
 from pyribbon import RibbonFilter
 
-f = RibbonFilter(["alice", "bob", "carol"], fp_bits=12)  # false-positive rate about 2**-12
-assert "alice" in f  # members are always found
-assert "mallory" not in f  # non-members are rejected, except with probability about 2**-12
+f = RibbonFilter(["alice", "bob", "carol"], fp_bits=12)  # false-positive rate of about 2**-12
+assert "alice" in f  # a member is always found
+assert "mallory" not in f  # a non-member is rejected, except with probability about 2**-12
 print(f.contains_many(["alice", "mallory"]))  # [True, False]
-print(len(f), f.size_in_bytes, round(f.bits_per_key))  # 3 256 683 (tiny sets are padded: see "Limits")
+print(len(f), f.size_in_bytes, round(f.bits_per_key))  # 3 256 683 (3 keys are padded to the minimum size, see "Limits")
 ```
+
+Space, build time and lookup time against the number of keys, measured on one machine against `pyfusefilter` and `rbloom`
+(lower is better in every panel; the numbers behind the plots, and the caveats, are under [How it compares](#how-it-compares)):
+
+![Space per key, build time and lookup time against the number of keys for pyribbon, Fuse8, Xor8 and rbloom](https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/docs/img/overview.png)
 
 ## Install
 
-pyribbon is **not on PyPI yet**. From a checkout (a C compiler is the only build requirement):
+pyribbon is not on PyPI yet. Install it from a checkout; a C compiler is the only build requirement:
 
 ```bash
 pip install .
 ```
 
-Python 3.10 or newer. Wheels are built with cibuildwheel (see `.github/workflows/wheels.yml`); none has been published.
+It needs Python 3.10 or newer. The wheels workflow (`.github/workflows/wheels.yml`) uses cibuildwheel, but no wheel has
+been published.
 
 ## Usage
 
-**Keys.** `bytes`, `bytearray` and `memoryview` (hashed by content), `str` (UTF-8), and `int` (any size; `numpy` integers
-work). `b"a"`, `"a"` and `97` are three different keys. Anything else (`float`, `None`, tuples) raises `TypeError`:
-there is no implicit `str()`. Python's `hash()` is never used, so filters can be saved and loaded in any process on any
-platform. The exact mapping is specified in `DESIGN.md` (section 3.1).
+### Keys
 
-**Choosing `fp_bits`.** The false-positive rate is `2**-fp_bits` (1 to 32, default 8). Measured on this project's test machine, at
-1,000,000 keys, including the 64-byte header (a Bloom filter needs `1.44 * fp_bits`):
+A key can be `bytes`, `bytearray` or `memoryview` (hashed by content), `str` (as UTF-8) or `int` (any size; `numpy`
+integers work). `b"a"`, `"a"` and `97` are three different keys. Anything else, such as a `float`, `None` or a tuple,
+raises `TypeError`, because there is no implicit `str()`. Python's `hash()` is never used, so a saved filter can be loaded
+in any process on any platform. `DESIGN.md` (section 3.1) specifies the exact mapping.
+
+### Choosing `fp_bits`
+
+The false-positive rate is `2**-fp_bits`, with `fp_bits` from 1 to 32 (default 8). The table below was measured on this
+project's test machine at 1,000,000 keys and includes the 64-byte header. A Bloom filter needs `1.44 * fp_bits` bits per
+key.
 
 | `fp_bits` | false-positive rate | bits per key |
 |---:|---:|---:|
@@ -45,8 +56,15 @@ platform. The exact mapping is specified in `DESIGN.md` (section 3.1).
 | 16 | 0.0015% | 17.99 |
 | 20 | 0.000095% | 22.48 |
 
-**Saving and loading, zero copy.** `to_bytes()` produces a versioned, little-endian format with a magic number and
-checksums. `from_buffer()` queries the bytes in place, so a memory-mapped file costs no memory beyond the pages touched:
+The measured false-positive rate matches the designed one. Each dot below is one test case (int, `str` and `bytes` keys,
+`fp_bits` 1 to 16, up to 100 million negative probes each); `docs/measurements.md` lists them all.
+
+![Measured false-positive rate divided by the designed rate 2^-r for every test case: all dots lie on 1.0 within their 95% intervals](https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/docs/img/accuracy.png)
+
+### Saving and loading
+
+`to_bytes()` produces a versioned, little-endian format with a magic number and checksums. `from_buffer()` queries the
+bytes where they are, without copying them, so a memory-mapped file uses no memory beyond the pages you touch:
 
 ```python
 import mmap
@@ -66,13 +84,15 @@ with tempfile.TemporaryDirectory() as folder:
         del g  # release the buffer before the map is closed
 ```
 
-`from_buffer(buf, verify=False)` skips the payload checksum (which reads every byte) so a huge mapped file stays lazy; the
-header is always validated. Serialized input is treated as untrusted: a truncated, corrupted or hostile buffer raises
-`FormatError` (a `ValueError`) and never reads outside the buffer. The checksum detects accidents, not tampering (it is not
-a MAC). Do not modify a buffer while a filter is using it.
+`from_buffer(buf, verify=False)` skips the payload checksum, which would read every byte, so a huge mapped file stays
+lazy. The header is always validated. The loader treats its input as untrusted: a truncated, corrupted or hostile buffer
+raises `FormatError` (a `ValueError`) and is never read outside its bounds. The checksum detects accidental corruption
+only. It is not a MAC, so it does not protect against tampering. Do not modify a buffer while a filter is using it.
 
-**Batches and arrays.** `contains_many(keys)` returns a `list[bool]`. A 1-D integer buffer (`array.array`, `numpy`) is
-hashed in C without the GIL, with exactly the result the same ints would give one by one:
+### Batches and arrays
+
+`contains_many(keys)` returns a `list[bool]`. A 1-D integer buffer (`array.array`, `numpy`) is hashed in C without the
+GIL, and gives exactly the same results as querying the same ints one at a time:
 
 ```python
 import array
@@ -84,8 +104,11 @@ f = RibbonFilter(ids)
 assert f.contains_many(array.array("q", [5, 10**9])) == [True, False]
 ```
 
-**Errors.** `ConstructionError` (no solvable system after `max_attempts` seeds; never returns a broken filter),
-`FormatError` (bad serialized data), both subclasses of `RibbonError`; invalid arguments raise `ValueError` or `TypeError`.
+### Errors
+
+A build that finds no solvable system after `max_attempts` seeds raises `ConstructionError`; it never returns a broken
+filter. Bad serialized data raises `FormatError`. Both are subclasses of `RibbonError`. Invalid arguments raise
+`ValueError` or `TypeError`.
 
 ```python
 from pyribbon import FormatError, RibbonFilter
@@ -96,18 +119,21 @@ except FormatError as error:
     print(error)  # invalid pyribbon data: buffer too short
 ```
 
-**Threads.** A filter is immutable: any number of threads may query one filter at the same time. Builds and large batches
-release the GIL. `pickle` and `copy` work. Wheels for the free-threaded build of CPython are not built yet.
+### Threads
+
+A filter is immutable, so any number of threads can query the same filter at once. Builds and large batches release the
+GIL. `pickle` and `copy` work. Wheels for the free-threaded build of CPython are not built yet.
 
 ## How it compares
 
-Everything in this section is generated by `make bench` (`docs/benchmark.md` has the machine description, method, medians,
-spreads and caveats; `docs/benchmark.json` the raw data; `docs/benchmark.png` the plots) and copied here by
-`benchmarks/update_readme.py`; a test fails if a number here differs from the report. Baselines: `pyfusefilter` (Xor8, Xor16,
-Fuse8, Fuse16, the maintained successor of `pyxorfilter`) and `rbloom` (Bloom). One machine (an i7-7700, CPython 3.14), pinned to
-one core.
+The tables in this section come from `make bench` and are copied in by `benchmarks/update_readme.py`; a test fails if a
+number here differs from the report. `docs/benchmark.md` has the machine description, method, medians, spreads and
+caveats, `docs/benchmark.json` the raw data. The figure above comes from `benchmarks/make_figures.py`; the full six-panel plot is
+[docs/benchmark.png](docs/benchmark.png). The baselines are `pyfusefilter` (Xor8,
+Xor16, Fuse8 and Fuse16; it is the maintained successor of `pyxorfilter`) and `rbloom` (a Bloom filter). All numbers come
+from one machine (an i7-7700, CPython 3.14), pinned to one core.
 
-The first table is the summary at the largest size, against the best other filter of the same fingerprint width:
+The first table summarises the largest size, comparing pyribbon with the best other filter of the same fingerprint width:
 
 <!-- bench:start -->
 *Where pyribbon wins and loses (int keys, n = 10,000,000):*
@@ -127,10 +153,10 @@ The first table is the summary at the largest size, against the best other filte
 | 16-bit | `in` non-member ns | 113 | 169 (rbloom 2^-16, builtin hash()) | -33% | pyribbon ahead |
 | 16-bit | batch Mkeys/s (50/50 mix) | 10.81 | 3.24 (rbloom 2^-16, builtin hash()) | +234% | pyribbon ahead |
 
-Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()` (negative = pyribbon lower). The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. Lower is better except for batch throughput. The batch row compares `contains_many` with the others' per-key loop, because none of them has a batch API. Generated from the data of this run, not hand-written.
+Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()`; a negative delta means pyribbon is lower. Lower is better except for batch throughput. The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. The batch row compares `contains_many` with the other libraries' per-key loop, because none of them has a batch API. The table is computed from the raw results of this run.
 <!-- bench:end -->
 
-How it varies with the number of keys:
+The next tables show how the results change with the number of keys:
 
 <!-- bench-by-size:start -->
 *Space, 8-bit class (bits per key including the 64-byte header; last column: pyribbon relative to Fuse8):*
@@ -164,46 +190,51 @@ How it varies with the number of keys:
 | 10,000,000 | 91 / 93 | 806 / 804 | 18.0 | 24.0 |
 <!-- bench-by-size:end -->
 
-How to read this:
+On space, pyribbon is the smallest filter up to about a hundred thousand keys, roughly level with Fuse8 at a million, and
+slightly larger than Fuse8 at ten million. With width 64 the overhead grows with the logarithm of the set size. It stays
+well below a Bloom filter at every size.
 
-* **Space.** pyribbon is the smallest filter for sets of up to about a hundred thousand keys, roughly level with Fuse8 at a
-  million, and slightly larger than Fuse8 at ten million: with width 64 the overhead grows with the logarithm of the set size.
-  It stays well below a Bloom filter at every size.
-* **Build time.** From Python keys, pyribbon builds several times faster than `pyfusefilter` *as shipped*, because that package
-  hashes every key in Python. That is a statement about the Python wrapper, not the algorithm: on pre-hashed keys the
-  bare C core of Fuse8 builds faster than pyribbon's elimination (last column). pyribbon also builds faster than `rbloom` here,
-  which calls Python's `hash()` per key.
-* **Queries.** `key in f` costs tens of nanoseconds in the C extension (the interpreter's call overhead is a good part of it);
-  `pyfusefilter` goes through `cffi` and hashes in Python. The batch API, and especially an integer array, avoids most of the
-  per-key interpreter cost.
-* **Caveats** (all in `docs/benchmark.md`): one machine with a `powersave` governor, so absolute numbers do not transfer, only the
-  comparisons within a run; baselines are measured as shipped, with the Python-side hashing they do.
+Building from Python keys, pyribbon is several times faster than `pyfusefilter` as shipped, because that package hashes
+every key in Python. That says something about the Python wrapper, not the algorithm: on pre-hashed keys the bare C core
+of Fuse8 builds faster than pyribbon's elimination (last column of the build table). pyribbon also builds faster than
+`rbloom` here, which calls Python's `hash()` per key.
+
+`key in f` takes tens of nanoseconds in the C extension, and a good part of that is the interpreter's call overhead.
+`pyfusefilter` goes through `cffi` and hashes in Python. The batch API, especially with an integer array, avoids most of
+the per-key interpreter cost.
+
+The caveats are in `docs/benchmark.md`. The numbers come from one machine with a `powersave` governor, so absolute
+figures do not transfer, only the comparisons within a run. The baselines are measured as shipped, including the
+Python-side hashing they do.
 
 ## How it works
 
-A key becomes one linear equation over GF(2) with a window of 64 consecutive unknowns; the unknowns are `r`-bit rows
-chosen so that every key's equation holds, and a query XORs the rows its equation selects and compares them with the key's
-`r`-bit fingerprint. Building is banded Gaussian elimination; if a random key set happens to be unsolvable (a few
-percent of attempts at the default size), the build retries with a new seed. This is the *standard Ribbon filter* of
-Dillinger and Walzer, "Ribbon filter: practically smaller than Bloom and Xor" (arXiv:2103.02515), with width 64 and the
-interleaved column layout. `RESEARCH.md` has the literature survey and `DESIGN.md` the decisions, formats and measurements
-behind this implementation. The C core builds and tests without Python (`make -C core test`).
+Each key becomes one linear equation over GF(2) with a window of 64 consecutive unknowns. The unknowns are `r`-bit rows,
+chosen so that every key's equation holds. A query XORs the rows its equation selects and compares the result with the
+key's `r`-bit fingerprint. Building is banded Gaussian elimination. If a random key set happens to be unsolvable (a few
+percent of attempts at the default size), the build retries with a new seed.
 
-## Limits (read these)
+The design is the standard Ribbon filter of Dillinger and Walzer, "Ribbon filter: practically smaller than Bloom and Xor"
+(arXiv:2103.02515), with width 64 and the interleaved column layout. `RESEARCH.md` has the literature survey and
+`DESIGN.md` the decisions, formats and measurements behind this implementation. The C core builds and tests without
+Python (`make -C core test`).
 
-* **Static.** No insertion or deletion after the build. Duplicate keys are harmless and counted by `len()`.
-* **Space.** About `1.12 * fp_bits` bits per key at a million keys, against `1.44 * fp_bits` for Bloom filters. With width 64
-  the overhead grows with the logarithm of the set size: binary-fuse filters are smaller from about a million keys up (see the
-  tables above). Width 128 or sharding would remove that and are on the roadmap.
-* **Small sets are padded.** The minimum is 128 rows: 128 bytes plus a 64-byte header at `fp_bits=8`. Use a plain `set`
-  for a few dozen keys.
-* **Build memory and time.** The build uses about 26 bytes per key temporarily (an array of hashes and the elimination
-  state). Its elimination is slower than the bare C core of the fuse filters (see the build table above).
-* **Hash.** 64-bit hashes: two distinct keys with the same hash are indistinguishable (probability about `n**2 / 2**65`).
-* **Platforms.** Developed and measured on Linux x86-64. The Windows and macOS code paths (MSVC intrinsics, portable
-  fallbacks) are exercised only by the CI workflows in this repository, which have not been run yet. Free-threaded CPython
-  wheels are not built.
-* **Not on PyPI.** Nothing has been published.
+## Limits
+
+* A filter is static: nothing can be inserted or deleted after the build. Duplicate keys are harmless and counted by
+  `len()`.
+* It uses about `1.12 * fp_bits` bits per key at a million keys, against `1.44 * fp_bits` for Bloom filters. With width 64
+  the overhead grows with the logarithm of the set size, so binary-fuse filters are smaller from about a million keys up
+  (see the tables above). Width 128 or sharding would remove that overhead; both are on the roadmap.
+* Small sets are padded. The minimum is 128 rows: 128 bytes plus a 64-byte header at `fp_bits=8`. Use a plain `set` for a
+  few dozen keys.
+* The build uses about 26 bytes per key temporarily (an array of hashes and the elimination state). Its elimination is
+  also slower than the bare C core of the fuse filters (see the build table above).
+* Hashes are 64-bit, so two distinct keys with the same hash are indistinguishable (probability about `n**2 / 2**65`).
+* It was developed and measured on Linux x86-64. The Windows and macOS code paths (MSVC intrinsics, portable fallbacks)
+  are exercised only by the CI workflows in this repository, which have not been run yet. Free-threaded CPython wheels
+  are not built.
+* pyribbon is not on PyPI. Nothing has been published.
 
 ## Development
 
@@ -213,10 +244,12 @@ make check              # ruff, docstring check, mypy --strict + stubtest, C tes
 make c-asan c-portable  # C tests under ASan/UBSan, and with the portable bit-op fallbacks
 make c-fuzz             # fuzz the loader
 make stats              # millions of probes: measured false-positive rates (docs/measurements.md)
-make bench              # the benchmark (docs/benchmark.png, docs/benchmark.md)
+make bench              # the benchmark (docs/benchmark.png, docs/benchmark.md) and the README figures
+make figures            # redraw docs/img/*.png from the saved results, without measuring again
 ```
 
 ## Licence and credits
 
-MIT (`LICENSE`). The vendored xxHash header (`core/vendor/xxhash.h`) is BSD 2-Clause (`LICENSES/`). The algorithm is due to
-Peter C. Dillinger and Stefan Walzer; this implementation was written from their papers, not from existing code.
+pyribbon is MIT licensed (`LICENSE`). The vendored xxHash header (`core/vendor/xxhash.h`) is BSD 2-Clause (`LICENSES/`).
+The algorithm is by Peter C. Dillinger and Stefan Walzer. This implementation was written from their papers, not from
+existing code.

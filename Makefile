@@ -3,7 +3,7 @@ BIN  := $(VENV)/bin
 PY   := $(BIN)/python
 
 .DEFAULT_GOAL := help
-.PHONY: help venv install-dev test pytest c-test c-asan c-portable c-fuzz ovh-sweep fpr-report stats calibrate lint format docstyle typecheck check bench build clean
+.PHONY: help venv install-dev test pytest c-test c-asan c-portable c-fuzz ovh-sweep fpr-report stats figures calibrate lint format docstyle typecheck check bench build clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -41,6 +41,11 @@ fpr-report:  ## Measure the false-positive rate against 2^-r with millions of pr
 stats:  ## Run the statistical tests (slow) and write docs/measurements.{json,md}
 	PYRIBBON_STATS_OUT=docs/measurements.json $(BIN)/pytest -m slow -s tests/test_statistics.py
 	$(PY) benchmarks/render_measurements.py docs/measurements.json docs/measurements.md
+	$(MAKE) figures
+
+figures:  ## Redraw the README figures (docs/img) from the saved benchmark and measurement results
+	$(BIN)/pip install -q -e '.[bench]'
+	$(PY) benchmarks/make_figures.py
 
 calibrate:  ## Regenerate the default-overhead table from the real core (slow)
 	$(MAKE) -C core calibrate
@@ -65,6 +70,7 @@ check: lint docstyle typecheck test  ## Everything CI runs
 bench:  ## Run the benchmarks (use an idle machine); writes docs/benchmark.png, .md and .json
 	$(BIN)/pip install -q -e '.[bench]'
 	$(PY) benchmarks/bench.py --plot docs/benchmark.png --table docs/benchmark.md --json docs/benchmark.json
+	$(MAKE) figures
 
 build:  ## Build sdist + wheel and validate them
 	rm -rf dist

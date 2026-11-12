@@ -3,6 +3,7 @@
 
 Measures bits/key at the *measured* false-positive rate, build time, single-query latency and batch throughput, and
 writes a PNG (``--plot``), a GitHub-flavoured Markdown report (``--table``) and the raw numbers (``--json``).
+``--render-only`` rebuilds the PNG and the report from a saved JSON without measuring anything.
 See ``benchmarks/README.md`` for the method and ``python benchmarks/bench.py --help`` for the options.
 """
 
@@ -687,10 +688,10 @@ def verdict_rows(cell: dict[str, Any]) -> list[list[str]]:
 def report_markdown(meta: dict[str, Any], results: list[dict[str, Any]]) -> str:
     """The whole ``benchmark.md``: machine block, parameters, summary, tables, notes."""
     out = ["# pyribbon benchmark", "", "## Machine and software", ""]
-    out += [f"- **{k}**: {v}" for k, v in meta["machine"].items()]
+    out += [f"- {k}: {v}" for k, v in meta["machine"].items()]
     out += ["", "## Run", ""]
-    out += [f"- **Date**: {meta['date']}", f"- **Command**: `{meta['command']}`"]
-    out += [f"- **{k}**: {v}" for k, v in meta["parameters"].items()]
+    out += [f"- Date: {meta['date']}", f"- Command: `{meta['command']}`"]
+    out += [f"- {k}: {v}" for k, v in meta["parameters"].items()]
     out += [f"- {s}" for s in meta["skipped"]]
     ints = [c for c in results if c["regime"] == "int"]
     if ints:
@@ -699,10 +700,10 @@ def report_markdown(meta: dict[str, Any], results: list[dict[str, Any]]) -> str:
         out += [md_table(["Class", "Metric", "pyribbon", "Best other", "Delta", "Verdict"], verdict_rows(top), left=2)]
         out += [
             "",
-            "Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()` "
-            "(negative = pyribbon lower). The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. "
-            "Lower is better except for batch throughput. The batch row compares `contains_many` with the others' per-key loop, "
-            "because none of them has a batch API. Generated from the data of this run, not hand-written.",
+            "Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()`; "
+            "a negative delta means pyribbon is lower. Lower is better except for batch throughput. The 'above log2(1/FPR)' rows "
+            "move with the measured FPR, whose uncertainty is in the notes. The batch row compares `contains_many` with the other "
+            "libraries' per-key loop, because none of them has a batch API. The table is computed from the raw results of this run.",
         ]
     for regime, title in (
         ("int", "int keys (pseudo-random 63-bit)"),
@@ -849,45 +850,55 @@ def notes(meta: dict[str, Any], results: list[dict[str, Any]]) -> list[str]:
     )
     out = ["", "## Notes and caveats", ""]
     out += [
-        "- **Same keys, same measured FPR.** Every filter is built from the same keys and its FPR is measured on the same "
-        f"disjoint negative probes ({p['probes8']:,} for the 8-bit class, {p['probes16']:,} for the 16-bit class; keys differ from "
-        "all members by construction). Fingerprint widths are discrete (8 or 16 bits) and Bloom filters are continuous, so each Bloom "
-        "filter is sized for 2^-8 or 2^-16 and then *measured*; bits/key is reported together with the measured FPR and with the "
-        "overhead above the information-theoretic minimum log2(1/FPR) bits/key, which compares filters with slightly different FPRs.",
-        "- **FPR confidence.** Intervals are 95% Wilson intervals for the stated number of probes. The 16-bit filters have only a few "
-        "hundred expected false positives, so their FPR (and therefore their 'above minimum' column) is known to roughly 5-10% only.",
-        "- **FPR sanity.** "
+        "- Every filter is built from the same keys, and its FPR is measured on the same disjoint negative probes "
+        f"({p['probes8']:,} for the 8-bit class, {p['probes16']:,} for the 16-bit class). The probe keys differ from all "
+        "members by construction. Fingerprint widths are discrete (8 or 16 bits) and Bloom filters are continuous, so each Bloom "
+        "filter is sized for 2^-8 or 2^-16 and its FPR is then measured. Bits/key is reported with the measured FPR and with the "
+        "overhead above the information-theoretic minimum of log2(1/FPR) bits/key, which lets filters with slightly different "
+        "FPRs be compared.",
+        "- The intervals are 95% Wilson intervals for the stated number of probes. The 16-bit filters have only a few "
+        "hundred expected false positives, so their FPR, and therefore their 'above minimum' column, is known only to roughly 5-10%.",
+        "- "
         + (
             "All measured FPRs are within 0.5x-2x of 2^-bits."
             if not flagged
             else "Outside 0.5x-2x of the target: " + "; ".join(flagged) + "."
         ),
-        "- **As shipped.** `pyfusefilter` hashes every key in Python (`str(key).encode()` then `xxhash.xxh64_intdigest`) on every call "
-        "and has no batch query; `pyribbon` hashes inside the C call. The headline numbers include these costs because they are what a user "
-        "gets. The diagnostic tables separate the Python hashing from the filter probe (the probe-only rows call the library's C function "
-        "through cffi with a pre-hashed key; the sum of hashing and probe rows is a lower bound on the shipped call, the rest is Python call overhead). "
-        "pyribbon cannot be split this way: its hash is part of the C call.",
-        "- **rbloom hashing.** rbloom hashes keys with Python's `hash()` unless given a `hash_func`; for `str`/`bytes` that hash is salted per process "
-        "(and cached in the str object), so it cannot be persisted and flatters repeated lookups of the same objects. The headline rbloom rows therefore pass an explicit deterministic "
-        "`hash_func` (ints: a 64-bit multiplicative hash; str: xxh64 of the UTF-8 bytes), whose Python call cost is included and listed in the diagnostics. "
-        "The 'builtin hash()' rows in the diagnostics use no callback and show rbloom's own probe cost; for int keys that is a sound configuration, so the win/loss summary counts it among the competitors."
+        "- `pyfusefilter` hashes every key in Python (`str(key).encode()` then `xxhash.xxh64_intdigest`) on every call "
+        "and has no batch query. `pyribbon` hashes inside the C call. The headline numbers include these costs because a user "
+        "pays them. The diagnostic tables separate the Python hashing from the filter probe. The probe-only rows call the "
+        "library's C function through cffi with a pre-hashed key. The sum of the hashing and probe rows is a lower bound on the "
+        "shipped call, and the remainder is Python call overhead. pyribbon cannot be split this way because its hash is part "
+        "of the C call.",
+        "- rbloom hashes keys with Python's `hash()` unless it is given a `hash_func`. For `str` and `bytes` that hash is "
+        "salted per process (and cached in the str object), so it cannot be persisted and it flatters repeated lookups of the "
+        "same objects. The headline rbloom rows therefore pass an explicit deterministic `hash_func` (ints: a 64-bit "
+        "multiplicative hash; str: xxh64 of the UTF-8 bytes). Its Python call cost is included in those rows and listed in the "
+        "diagnostics. The 'builtin hash()' rows in the diagnostics use no callback and show rbloom's own probe cost. For int "
+        "keys that is a sound configuration, so the win/loss summary counts it among the competitors."
         + (
-            f" Check on {chk['n']:,} sequential ints and {chk['probes']:,} probes (target {chk['target']:.2e}): "
-            f"default hash() gives FPR {chk['default hash()']:.2e}, our hash_func {chk['hash_func']:.2e}, so rbloom's FPR is sane with either."
+            f" A check on {chk['n']:,} sequential ints and {chk['probes']:,} probes (target {chk['target']:.2e}) gives "
+            f"FPR {chk['default hash()']:.2e} with the default hash() and {chk['hash_func']:.2e} with our hash_func, so "
+            "rbloom's FPR is sane with either."
             if chk
             else ""
         ),
-        "- **Batch.** Only pyribbon has a batch API (`contains_many`). For every other library the batch figure is a per-key list comprehension "
-        "`[k in f for k in keys]` (marked in the table). The 50/50 mix is the throughput of one member batch plus one non-member batch.",
-        f"- **Single-query latency.** A tight Python `for` loop over {p['queries']:,} random member keys (sampled with replacement) or non-member keys, with the same loop "
-        f"without the call timed in the same repeat and subtracted (median {g(statistics.median(empty), 3)} ns per empty iteration here). "
-        "What remains still contains the `k in f` bytecodes (a few ns). The unsubtracted figure is in the last column.",
-        f"- **Timing.** `time.perf_counter_ns`, GC disabled while timed, one warm-up pass, median and min/max of {p['repeats']} repeats "
-        "(3 at n = 10^7, no warm-up build there). Keys are generated before timing. Build time includes allocation and hashing, but not key generation.",
-        "- **Keys.** `int`: distinct pseudo-random 63-bit integers from a fixed-seed bijective mixer; `str`: `user:` + 11 digits, members 0..n-1, "
-        "probes from 10^10 upwards. Query keys are fresh objects created in query order (so members and non-members have the same memory layout) and are the same objects in every repeat (CPython caches a str's hash, which only matters for rbloom's builtin hash rows).",
-        "- **Machine.** Numbers are comparable between libraries within this run, not across machines. A `powersave`/`ondemand` governor adds noise; "
-        "run on an otherwise idle machine, with turbo and the governor fixed if you can.",
+        "- Only pyribbon has a batch API (`contains_many`). For every other library the batch figure is a per-key list "
+        "comprehension, `[k in f for k in keys]`, marked as such in the table. The 50/50 mix is the throughput of one member "
+        "batch plus one non-member batch.",
+        f"- Single-query latency is measured with a tight Python `for` loop over {p['queries']:,} random member keys "
+        "(sampled with replacement) or non-member keys. The same loop without the call is timed in the same repeat and "
+        f"subtracted (median {g(statistics.median(empty), 3)} ns per empty iteration here). What remains still includes the "
+        "`k in f` bytecodes, a few ns. The unsubtracted figure is in the last column.",
+        f"- Timing uses `time.perf_counter_ns` with GC disabled while timed and one warm-up pass. The figures are the median "
+        f"and min/max of {p['repeats']} repeats (3 at n = 10^7, with no warm-up build there). Keys are generated before timing. "
+        "Build time includes allocation and hashing but not key generation.",
+        "- `int` keys are distinct pseudo-random 63-bit integers from a fixed-seed bijective mixer. `str` keys are `user:` plus "
+        "11 digits, with members 0..n-1 and probes from 10^10 upwards. Query keys are fresh objects created in query order, "
+        "so members and non-members have the same memory layout, and they are the same objects in every repeat (CPython "
+        "caches a str's hash, which only matters for rbloom's builtin hash rows).",
+        "- Numbers are comparable between libraries within this run and not across machines. A `powersave` or `ondemand` "
+        "governor adds noise. Run on an otherwise idle machine, with turbo and the governor fixed if you can.",
     ]
     return out
 
@@ -1091,7 +1102,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Command-line options."""
     p = argparse.ArgumentParser(
         description="Benchmark pyribbon against pyfusefilter (Xor8/16, Fuse8/16) and rbloom. Needs `pip install -e '.[bench]'`.",
-        epilog="Full run: make bench. Smoke test: python benchmarks/bench.py --quick --out-dir /tmp/bench-quick",
+        epilog="Full run: make bench. Smoke test: python benchmarks/bench.py --quick --out-dir /tmp/bench-quick. "
+        "Re-render saved results: python benchmarks/bench.py --render-only docs/benchmark.json --out-dir /tmp/bench-render",
     )
     p.add_argument(
         "--quick",
@@ -1124,11 +1136,39 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--plot", type=Path, help="PNG path (default: OUT_DIR/benchmark.png)")
     p.add_argument("--table", type=Path, help="Markdown path (default: OUT_DIR/benchmark.md)")
     p.add_argument("--json", type=Path, help="raw-results path (default: OUT_DIR/benchmark.json)")
-    return p.parse_args(argv)
+    p.add_argument(
+        "--render-only",
+        type=Path,
+        metavar="PATH",
+        help="rebuild the PNG and the Markdown report from a JSON written by --json, without measuring anything "
+        "(needs only matplotlib and numpy; the JSON is not rewritten)",
+    )
+    args = p.parse_args(argv)
+    if args.render_only and args.json:
+        p.error("--json cannot be combined with --render-only: the JSON is never rewritten")
+    return args
+
+
+def write_reports(meta: dict[str, Any], results: list[dict[str, Any]], plot_path: Path, table_path: Path) -> None:
+    """Write the Markdown report and the PNG plot for finished results."""
+    table_path.parent.mkdir(parents=True, exist_ok=True)
+    table_path.write_text(report_markdown(meta, results))
+    plot(meta, results, plot_path)
+
+
+def render_only(src: Path, plot_path: Path, table_path: Path) -> int:
+    """Rebuild the report and the plot from a saved results JSON, measuring nothing."""
+    data = json.loads(src.read_text())
+    if not isinstance(data, dict) or "meta" not in data or "results" not in data:
+        print(f"{src}: not a benchmark JSON (expected the keys 'meta' and 'results')", file=sys.stderr)
+        return 1
+    write_reports(data["meta"], data["results"], plot_path, table_path)
+    print(f"wrote {plot_path} and {table_path} from {src}")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the benchmark and write the reports."""
+    """Run the benchmark, or with ``--render-only`` re-render a saved run, and write the reports."""
     args = parse_args(argv)
     out_dir = args.out_dir or (Path(tempfile.mkdtemp(prefix="pyribbon-bench-")) if args.quick else ROOT / "docs")
     plot_path, table_path, json_path = (
@@ -1136,6 +1176,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.table or out_dir / "benchmark.md",
         args.json or out_dir / "benchmark.json",
     )
+    if args.render_only:
+        return render_only(args.render_only, plot_path, table_path)
     sizes = args.sizes or ([1_000, 10_000] if args.quick else [1_000, 10_000, 100_000, 1_000_000, 10_000_000])
     str_sizes = args.str_sizes or (
         [1_000] if args.quick else [s for s in (10_000, 1_000_000) if s <= max(sizes)] or [max(sizes)]
@@ -1206,9 +1248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "" if len(results) == len(cfg.sizes) + len(cfg.str_sizes) else " (INCOMPLETE: the run failed)"
             )
             json_path.write_text(json.dumps({"meta": meta, "results": results}, indent=1))
-            table_path.parent.mkdir(parents=True, exist_ok=True)
-            table_path.write_text(report_markdown(meta, results))
-            plot(meta, results, plot_path)
+            write_reports(meta, results, plot_path, table_path)
             say(f"\nwrote {plot_path}, {table_path}, {json_path} (total {meta['elapsed_s']:.0f} s)")
     return 0
 

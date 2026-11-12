@@ -67,3 +67,13 @@ def test_readme_fp_bits_table_matches_real_filters() -> None:
             100 * 2.0 ** -int(r), rel=0.05
         )  # the README rounds to two significant digits
         assert float(bits) == pytest.approx(RibbonFilter(keys, fp_bits=int(r)).bits_per_key, abs=0.005)
+
+
+def test_readme_images_exist() -> None:
+    """Every image in the README is an absolute raw-GitHub URL (so it renders on PyPI too) of a file in this repository."""
+    urls = [u for u in re.findall(r"!\[[^\]]*\]\((\S+?)\)", README.read_text()) if not u.endswith("/badge.svg")]
+    prefix = "https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/"
+    assert len(urls) >= 2
+    for url in urls:
+        assert url.startswith(prefix), f"use an absolute raw URL for {url}"
+        assert (ROOT / url.removeprefix(prefix)).is_file(), f"missing image file for {url}"

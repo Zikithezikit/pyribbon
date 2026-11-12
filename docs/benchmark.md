@@ -2,33 +2,33 @@
 
 ## Machine and software
 
-- **CPU**: Intel Core i7-7700 CPU @ 3.60GHz
-- **Logical CPUs**: 8, benchmark pinned to CPU 7
-- **Frequency scaling governor**: powersave
-- **CPU frequency**: 0.80 GHz at start, max 4.20 GHz, turbo enabled
-- **OS / kernel**: Linux 7.0.0-43-generic (Linux-7.0.0-43-generic-x86_64-with-glibc2.43)
-- **Python**: CPython 3.14.4, built with GCC 15.2.0
-- **Python build flags**: CC=x86_64-linux-gnu-gcc; CFLAGS=-fno-strict-overflow -Wsign-compare -DNDEBUG -g -O2 -Wall
-- **pyribbon extension**: _ribbon.abi3.so; compiler recorded in the binary: GCC: (Ubuntu 15.2.0-16ubuntu1) 15.2.0
-- **pyribbon build flags**: setup.py adds none (/std:c11 on Windows only): the interpreter's CFLAGS above are used
-- **pyribbon version**: 0.1.0
-- **pyfusefilter version**: 1.3.2
-- **rbloom version**: 1.5.4
-- **Other packages**: xxhash 4.1.0, cffi 2.1.1, numpy 2.5.4, matplotlib 3.11.2
+- CPU: Intel Core i7-7700 CPU @ 3.60GHz
+- Logical CPUs: 8, benchmark pinned to CPU 7
+- Frequency scaling governor: powersave
+- CPU frequency: 0.80 GHz at start, max 4.20 GHz, turbo enabled
+- OS / kernel: Linux 7.0.0-43-generic (Linux-7.0.0-43-generic-x86_64-with-glibc2.43)
+- Python: CPython 3.14.4, built with GCC 15.2.0
+- Python build flags: CC=x86_64-linux-gnu-gcc; CFLAGS=-fno-strict-overflow -Wsign-compare -DNDEBUG -g -O2 -Wall
+- pyribbon extension: _ribbon.abi3.so; compiler recorded in the binary: GCC: (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+- pyribbon build flags: setup.py adds none (/std:c11 on Windows only): the interpreter's CFLAGS above are used
+- pyribbon version: 0.1.0
+- pyfusefilter version: 1.3.2
+- rbloom version: 1.5.4
+- Other packages: xxhash 4.1.0, cffi 2.1.1, numpy 2.5.4, matplotlib 3.11.2
 
 ## Run
 
-- **Date**: 2026-11-12T21:28:24+02:00
-- **Command**: `python benchmarks/bench.py --plot docs/benchmark.png --table docs/benchmark.md --json docs/benchmark.json`
-- **Pinning**: CPU 7
-- **Key sizes (int)**: 1,000, 10,000, 100,000, 1,000,000, 10,000,000
-- **Key sizes (str)**: 10,000, 1,000,000
-- **Repeats**: 7 (at most 3 at n >= 10,000,000); statistics are median and min/max
-- **Query set**: 100,000 keys per loop/batch
-- **FPR probes**: 4,000,000 (8-bit class), 20,000,000 (16-bit class), in chunks of 1,000,000
-- **Seed**: 20261112
-- **Mode**: full
-- **Total run time**: 591 s
+- Date: 2026-11-12T21:28:24+02:00
+- Command: `python benchmarks/bench.py --plot docs/benchmark.png --table docs/benchmark.md --json docs/benchmark.json`
+- Pinning: CPU 7
+- Key sizes (int): 1,000, 10,000, 100,000, 1,000,000, 10,000,000
+- Key sizes (str): 10,000, 1,000,000
+- Repeats: 7 (at most 3 at n >= 10,000,000); statistics are median and min/max
+- Query set: 100,000 keys per loop/batch
+- FPR probes: 4,000,000 (8-bit class), 20,000,000 (16-bit class), in chunks of 1,000,000
+- Seed: 20261112
+- Mode: full
+- Total run time: 591 s
 
 ## Where pyribbon wins and loses (int keys, n = 10,000,000)
 
@@ -47,7 +47,7 @@
 | 16-bit | `in` non-member ns | 113 | 169 (rbloom 2^-16, builtin hash()) | -33% | pyribbon ahead |
 | 16-bit | batch Mkeys/s (50/50 mix) | 10.81 | 3.24 (rbloom 2^-16, builtin hash()) | +234% | pyribbon ahead |
 
-Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()` (negative = pyribbon lower). The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. Lower is better except for batch throughput. The batch row compares `contains_many` with the others' per-key loop, because none of them has a batch API. Generated from the data of this run, not hand-written.
+Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()`; a negative delta means pyribbon is lower. Lower is better except for batch throughput. The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. The batch row compares `contains_many` with the other libraries' per-key loop, because none of them has a batch API. The table is computed from the raw results of this run.
 
 ## Results: int keys (pseudo-random 63-bit)
 
@@ -395,13 +395,13 @@ Delta is relative to the best other filter of the same fingerprint class, includ
 
 ## Notes and caveats
 
-- **Same keys, same measured FPR.** Every filter is built from the same keys and its FPR is measured on the same disjoint negative probes (4,000,000 for the 8-bit class, 20,000,000 for the 16-bit class; keys differ from all members by construction). Fingerprint widths are discrete (8 or 16 bits) and Bloom filters are continuous, so each Bloom filter is sized for 2^-8 or 2^-16 and then *measured*; bits/key is reported together with the measured FPR and with the overhead above the information-theoretic minimum log2(1/FPR) bits/key, which compares filters with slightly different FPRs.
-- **FPR confidence.** Intervals are 95% Wilson intervals for the stated number of probes. The 16-bit filters have only a few hundred expected false positives, so their FPR (and therefore their 'above minimum' column) is known to roughly 5-10% only.
-- **FPR sanity.** All measured FPRs are within 0.5x-2x of 2^-bits.
-- **As shipped.** `pyfusefilter` hashes every key in Python (`str(key).encode()` then `xxhash.xxh64_intdigest`) on every call and has no batch query; `pyribbon` hashes inside the C call. The headline numbers include these costs because they are what a user gets. The diagnostic tables separate the Python hashing from the filter probe (the probe-only rows call the library's C function through cffi with a pre-hashed key; the sum of hashing and probe rows is a lower bound on the shipped call, the rest is Python call overhead). pyribbon cannot be split this way: its hash is part of the C call.
-- **rbloom hashing.** rbloom hashes keys with Python's `hash()` unless given a `hash_func`; for `str`/`bytes` that hash is salted per process (and cached in the str object), so it cannot be persisted and flatters repeated lookups of the same objects. The headline rbloom rows therefore pass an explicit deterministic `hash_func` (ints: a 64-bit multiplicative hash; str: xxh64 of the UTF-8 bytes), whose Python call cost is included and listed in the diagnostics. The 'builtin hash()' rows in the diagnostics use no callback and show rbloom's own probe cost; for int keys that is a sound configuration, so the win/loss summary counts it among the competitors. Check on 10,000 sequential ints and 1,000,000 probes (target 3.91e-03): default hash() gives FPR 4.68e-03, our hash_func 4.32e-03, so rbloom's FPR is sane with either.
-- **Batch.** Only pyribbon has a batch API (`contains_many`). For every other library the batch figure is a per-key list comprehension `[k in f for k in keys]` (marked in the table). The 50/50 mix is the throughput of one member batch plus one non-member batch.
-- **Single-query latency.** A tight Python `for` loop over 100,000 random member keys (sampled with replacement) or non-member keys, with the same loop without the call timed in the same repeat and subtracted (median 7.04 ns per empty iteration here). What remains still contains the `k in f` bytecodes (a few ns). The unsubtracted figure is in the last column.
-- **Timing.** `time.perf_counter_ns`, GC disabled while timed, one warm-up pass, median and min/max of 7 repeats (3 at n = 10^7, no warm-up build there). Keys are generated before timing. Build time includes allocation and hashing, but not key generation.
-- **Keys.** `int`: distinct pseudo-random 63-bit integers from a fixed-seed bijective mixer; `str`: `user:` + 11 digits, members 0..n-1, probes from 10^10 upwards. Query keys are fresh objects created in query order (so members and non-members have the same memory layout) and are the same objects in every repeat (CPython caches a str's hash, which only matters for rbloom's builtin hash rows).
-- **Machine.** Numbers are comparable between libraries within this run, not across machines. A `powersave`/`ondemand` governor adds noise; run on an otherwise idle machine, with turbo and the governor fixed if you can.
+- Every filter is built from the same keys, and its FPR is measured on the same disjoint negative probes (4,000,000 for the 8-bit class, 20,000,000 for the 16-bit class). The probe keys differ from all members by construction. Fingerprint widths are discrete (8 or 16 bits) and Bloom filters are continuous, so each Bloom filter is sized for 2^-8 or 2^-16 and its FPR is then measured. Bits/key is reported with the measured FPR and with the overhead above the information-theoretic minimum of log2(1/FPR) bits/key, which lets filters with slightly different FPRs be compared.
+- The intervals are 95% Wilson intervals for the stated number of probes. The 16-bit filters have only a few hundred expected false positives, so their FPR, and therefore their 'above minimum' column, is known only to roughly 5-10%.
+- All measured FPRs are within 0.5x-2x of 2^-bits.
+- `pyfusefilter` hashes every key in Python (`str(key).encode()` then `xxhash.xxh64_intdigest`) on every call and has no batch query. `pyribbon` hashes inside the C call. The headline numbers include these costs because a user pays them. The diagnostic tables separate the Python hashing from the filter probe. The probe-only rows call the library's C function through cffi with a pre-hashed key. The sum of the hashing and probe rows is a lower bound on the shipped call, and the remainder is Python call overhead. pyribbon cannot be split this way because its hash is part of the C call.
+- rbloom hashes keys with Python's `hash()` unless it is given a `hash_func`. For `str` and `bytes` that hash is salted per process (and cached in the str object), so it cannot be persisted and it flatters repeated lookups of the same objects. The headline rbloom rows therefore pass an explicit deterministic `hash_func` (ints: a 64-bit multiplicative hash; str: xxh64 of the UTF-8 bytes). Its Python call cost is included in those rows and listed in the diagnostics. The 'builtin hash()' rows in the diagnostics use no callback and show rbloom's own probe cost. For int keys that is a sound configuration, so the win/loss summary counts it among the competitors. A check on 10,000 sequential ints and 1,000,000 probes (target 3.91e-03) gives FPR 4.68e-03 with the default hash() and 4.32e-03 with our hash_func, so rbloom's FPR is sane with either.
+- Only pyribbon has a batch API (`contains_many`). For every other library the batch figure is a per-key list comprehension, `[k in f for k in keys]`, marked as such in the table. The 50/50 mix is the throughput of one member batch plus one non-member batch.
+- Single-query latency is measured with a tight Python `for` loop over 100,000 random member keys (sampled with replacement) or non-member keys. The same loop without the call is timed in the same repeat and subtracted (median 7.04 ns per empty iteration here). What remains still includes the `k in f` bytecodes, a few ns. The unsubtracted figure is in the last column.
+- Timing uses `time.perf_counter_ns` with GC disabled while timed and one warm-up pass. The figures are the median and min/max of 7 repeats (3 at n = 10^7, with no warm-up build there). Keys are generated before timing. Build time includes allocation and hashing but not key generation.
+- `int` keys are distinct pseudo-random 63-bit integers from a fixed-seed bijective mixer. `str` keys are `user:` plus 11 digits, with members 0..n-1 and probes from 10^10 upwards. Query keys are fresh objects created in query order, so members and non-members have the same memory layout, and they are the same objects in every repeat (CPython caches a str's hash, which only matters for rbloom's builtin hash rows).
+- Numbers are comparable between libraries within this run and not across machines. A `powersave` or `ondemand` governor adds noise. Run on an otherwise idle machine, with turbo and the governor fixed if you can.
