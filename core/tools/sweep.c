@@ -6,9 +6,11 @@
 
 #include "ribbon.h"
 
-static uint64_t *keys(size_t n, uint64_t seed) {
+/* Each trial uses its own key range: trials that share keys share hash values and are correlated, which biases
+ * the failure-rate estimate (an early version of this tool re-used [0, n) with different seeds and overestimated it). */
+static uint64_t *keys(size_t n, size_t first) {
   uint64_t *h = (uint64_t *)malloc(n * sizeof *h);
-  for (size_t i = 0; i < n; i++) h[i] = rb_hash_i64((int64_t)i, seed);
+  for (size_t i = 0; i < n; i++) h[i] = rb_hash_i64((int64_t)(first + i), 0);
   return h;
 }
 
@@ -27,7 +29,7 @@ int main(int argc, char **argv) {
       int failed = 0;
       double attempts = 0.0, rows = 0.0;
       for (int t = 0; t < trials; t++) {
-        uint64_t *h = keys(n, (uint64_t)t * 7919u + 1u);
+        uint64_t *h = keys(n, (size_t)t * n);
         rb_params p = rb_params_default();
         p.overhead = eps;
         p.max_attempts = 1;

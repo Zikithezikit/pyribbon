@@ -23,8 +23,26 @@ KIND_BYTES, KIND_STR, KIND_BIGINT = 0, 1, 2
 MAGIC = b"PYRIBBON"
 HEADER_SIZE = 64
 MAX_ROWS = 1 << 40
-OVERHEAD_TABLE = [0.061, 0.052, 0.052, 0.050, 0.054, 0.059, 0.067, 0.072,
-                  0.083, 0.091, 0.099, 0.102, 0.111, 0.118, 0.124, 0.130]  # fmt: skip
+OVERHEAD_TABLE = [
+    0.066,
+    0.054,
+    0.054,
+    0.053,
+    0.058,
+    0.064,
+    0.071,
+    0.078,
+    0.087,
+    0.095,
+    0.101,
+    0.109,
+    0.115,
+    0.125,
+    0.134,
+    0.139,
+    0.148,
+    0.155,
+]
 
 
 class ReferenceError(Exception):
@@ -49,6 +67,10 @@ def xxh3(data: bytes) -> int:
     return xxhash.xxh3_64_intdigest(data)
 
 
+def _seed_offset(seed: int) -> int:
+    return mix64((seed + GAMMA) & MASK)
+
+
 def hash_bytes(data: bytes, seed: int, kind: int) -> int:
     """Return the master hash of a byte key (DESIGN.md section 3.1)."""
     h0 = xxh3(data)
@@ -56,12 +78,12 @@ def hash_bytes(data: bytes, seed: int, kind: int) -> int:
         h0 ^= TAG_STR
     elif kind == KIND_BIGINT:
         h0 ^= TAG_BIGINT
-    return mix64(((h0 ^ seed) + GAMMA) & MASK)
+    return mix64((h0 + _seed_offset(seed)) & MASK)
 
 
 def hash_i64(value: int, seed: int) -> int:
     """Return the master hash of an int in [-2**63, 2**63)."""
-    return mix64((((value & MASK) ^ TAG_INT ^ seed) + GAMMA) & MASK)
+    return mix64((((value & MASK) ^ TAG_INT) + _seed_offset(seed)) & MASK)
 
 
 def hash_int(value: int, seed: int) -> int:
@@ -98,8 +120,8 @@ def default_overhead(n: int) -> float:
         return OVERHEAD_TABLE[0]
     k = n.bit_length() - 1
     frac = (n - (1 << k)) / (1 << k)
-    if k >= 22:
-        return OVERHEAD_TABLE[15] + 0.006 * ((k - 22) + frac)
+    if k >= 24:
+        return OVERHEAD_TABLE[17] + 0.007 * ((k - 24) + frac)
     return OVERHEAD_TABLE[k - 7] + frac * (OVERHEAD_TABLE[k - 6] - OVERHEAD_TABLE[k - 7])
 
 

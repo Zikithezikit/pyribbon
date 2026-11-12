@@ -37,8 +37,9 @@ elimination, i7-7700): overhead needed for 95% per-attempt success, w = 64 vs w 
 
 (These agree with [R Table 1] and RocksDB's tables where they overlap: 4.7% vs 4.9% at 2^10, 3.8% vs 3.8% at 50%
 success and 2^14. RocksDB's extrapolation past 2^17 overstates the w = 64 overhead: ~14% predicted vs 12.7% measured
-at 2^22.) At r = 8 and n = 1e6, w = 64 costs about 8.9 bits/key, **6% below Fuse8's measured 9.51**, so ribbon w = 64
-still wins on space at every size I tested; w = 128 would save a further ~6% of bits per key but its insertion was
+at 2^22.) At r = 8 and n = 1e6, w = 64 costs about 9.0 bits/key against Fuse8's 9.04 (pyfusefilter, measured by the benchmark
+harness on a loaded machine), and 8.8 against 9.51 at n = 1e5, so ribbon w = 64 wins on space at small and medium n and is
+level with Fuse at n = 1e6 and beyond; w = 128 would save a further ~6% of bits per key but its insertion was
 2-3x slower in my naive generic code, and it needs a two-word core with 128-bit shifts in the query. Not worth it for
 v0.1; w = 128 and hard sharding lead the roadmap, and the format already carries the width, so adding them is not a
 format break. **The honest caveat for the README:** the space advantage over Fuse is single-digit percent at large n.
@@ -53,14 +54,19 @@ smash, free-threaded wheels.
 | width `w` | 64 | fixed (stored in header as `width_log2`) | §1 |
 | `fp_bits` r | 8 | 1..32 | FP ≈ 2^-r. 8 matches Xor8/Fuse8 (0.39%) for like-for-like benchmarks; ≤ 32 keeps the per-slot result in a `uint32_t` |
 | rows `m` | `roundup64(ceil(n·(1+ε(n))))`, min 128 | multiple of 64 | the interleaved layout needs `m % 64 == 0`; `m ≥ 2w` so that the number of start positions `m-w+1 > w` and every window has a following block (R§9) |
-| overhead ε(n) | table interpolated linearly in `log2 n`, from 6.1% at 2^7 down to 5.0% at 2^10 and up to 13.0% at 2^22; beyond 2^22 +0.6 pp per doubling | `overhead=` override | the measured 95% points of the width study plus a 0.3 pp margin. **Initial table**: Phase 2 regenerates it from the real core (`make ovh-sweep`). Values above 2^22 slots are extrapolated from the measured slope (0.56 pp/doubling between 2^20 and 2^22) and unmeasured. Acceptance: measured per-attempt failure ≤ 7% and mean attempts ≤ 1.1 for n in {1e2..1e7} |
+| overhead ε(n) | table at n = 2^7..2^24 interpolated linearly in n (6.6% at 2^7, 5.3% at 2^10, 9.5% at 2^16, 12.5% at 2^20, 15.5% at 2^24); above 2^24 +0.7 pp per doubling | `overhead=` override | **measured with the real derivation and insertion code** (`make calibrate`, `core/tools/overhead_table.py`): 3rd percentile of the fill at first failure, i.e. 97% per-attempt success, expected attempts ≈ 1.03. Above 2^24 slots it is extrapolated from the measured slope and unmeasured. |
 | `max_attempts` | 32 | 1..255 | with 5% per-attempt failure, 32 attempts is far below any realistic failure rate; RocksDB uses 256 with a Bloom fallback (R§9); we raise instead |
 | retry policy | new seed every attempt; from the 3rd attempt also grow `m` by `(w+1)/w` | | reseeding is the primary mechanism; growth is the paper's alternative [R p9] and guarantees termination even if the fit is wrong for some `n` (R§5) |
 | `seed` | 0 | 0..2^64-1 | user domain separation; stored in the header |
 
-Predicted size (**a prediction from the width study, not yet a measurement of the library**): r = 8 gives `8·(1+ε)`
-bits/key, i.e. ≈ 8.4 at 1e3, 8.8 at 1e5, 8.9 at 1e6, before rounding `m` up to 64. Tiny sets are padded to the 128-row minimum
-(128 rows × 8 bits = 128 bytes for r = 8) and the README will say so.
+Validation (`make ovh-sweep`, real library, an independent key range per trial; 4000 trials for n <= 1000, 1500 for
+3e3-1e4, 300 for 1e5, 60 for 1e6): per-attempt failure at the default overhead is 0.0% (n=100), 0.85% (300), 0.10% (1e3),
+1.8% (3e3), 2.1% (1e4), 3.3% (1e5), 3.3% (1e6); mean attempts <= 1.033; so the acceptance bound (failure <= 7%, mean attempts
+<= 1.1) holds at every size. Resulting size at r = 8: 8.70 bits/key at n = 1e3, 8.60 at 1e4, 8.79 at 1e5, 8.99 at 1e6 (tiny
+sets are padded to the 128-row minimum: 10.24 bits/key at n = 100). **Two measurement pitfalls found on the way, both fixed:**
+(1) the first version mixed the seed into the key hash by XOR, so dense integer keys gave overlapping hash sets for nearby
+seeds (`seed=1` rebuilt almost the filter of `seed=0`); (2) trials that re-use the same keys share hash values and are
+correlated, which had inflated one failure-rate estimate to 12% against 4% for independent trials.
 
 **On failure** the build raises `ConstructionError` after `max_attempts`; a filter that did not pass banding is
 never returned. `n = 0` produces a valid empty filter (header only, `num_rows = 0`, every query false).
@@ -81,7 +87,10 @@ Python's built-in `hash()` is **never** used (randomized per process; breaks sav
 
 `TAG_STR = 0x6a09e667f3bcc908`, `TAG_INT = 0xbb67ae8584caa73b`, `TAG_BIGINT = 0x3c6ef372fe94f82b` (SHA-512 initial
 values, chosen as nothing-up-my-sleeve), and the bytes tag is 0. So `b"a"`, `"a"` and `97` are distinct keys. Then
-`H = mix64((h0 ^ seed) + GAMMA)`.
+`H = mix64(h0 + mix64(seed + GAMMA))`. The seed is pre-mixed and *added*: an earlier draft XORed it into `h0`, and a
+measurement showed that for dense integer keys the hash values overlap across nearby seeds (`{i ^ seed}` is nearly the same set), so
+`seed=1` rebuilt almost the same filter as `seed=0` and trial outcomes were correlated. A random 64-bit offset makes every seed an
+independent hash universe.
 
 `mix64` is the SplitMix64 finalizer (Vigna; public domain) and `GAMMA = 0x9e3779b97f4a7c15`:
 `z = (z ^ z>>30)·0xbf58476d1ce4e5b9; z = (z ^ z>>27)·0x94d049bb133111eb; return z ^ z>>31`.

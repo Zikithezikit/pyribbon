@@ -3,7 +3,7 @@ BIN  := $(VENV)/bin
 PY   := $(BIN)/python
 
 .DEFAULT_GOAL := help
-.PHONY: help venv install-dev test pytest c-test c-asan c-portable c-fuzz ovh-sweep fpr-report lint format docstyle typecheck check bench build clean
+.PHONY: help venv install-dev test pytest c-test c-asan c-portable c-fuzz ovh-sweep fpr-report calibrate lint format docstyle typecheck check bench build clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -38,6 +38,9 @@ ovh-sweep:  ## Measure construction failure rate vs overhead with the real core
 fpr-report:  ## Measure the false-positive rate against 2^-r with millions of probes
 	$(MAKE) -C core fpr-report
 
+calibrate:  ## Regenerate the default-overhead table from the real core (slow)
+	$(MAKE) -C core calibrate
+
 lint:  ## Lint and check formatting
 	$(BIN)/ruff check .
 	$(BIN)/ruff format --check .
@@ -55,9 +58,9 @@ typecheck:  ## Run mypy (strict) and stubtest against the compiled module
 
 check: lint docstyle typecheck test  ## Everything CI runs
 
-bench:  ## Run the benchmarks; writes docs/benchmark.png and docs/benchmark.md
+bench:  ## Run the benchmarks (use an idle machine); writes docs/benchmark.png, .md and .json
 	$(BIN)/pip install -q -e '.[bench]'
-	$(PY) benchmarks/bench.py --plot docs/benchmark.png --table docs/benchmark.md
+	$(PY) benchmarks/bench.py --plot docs/benchmark.png --table docs/benchmark.md --json docs/benchmark.json
 
 build:  ## Build sdist + wheel and validate them
 	rm -rf dist

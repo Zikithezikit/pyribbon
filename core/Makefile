@@ -9,7 +9,7 @@ LDLIBS := -lm
 HDRS   := include/ribbon.h src/rb_internal.h
 B      := build
 
-.PHONY: test asan portable fuzz ovh-sweep fpr-report clean
+.PHONY: test asan portable fuzz ovh-sweep fpr-report calibrate clean
 .DEFAULT_GOAL := test
 
 $(B):
@@ -52,6 +52,12 @@ $(B)/fpr: tools/fpr.c $(LIB) $(HDRS) | $(B)
 
 fpr-report: $(B)/fpr
 	./$(B)/fpr
+
+$(B)/calibrate: tools/calibrate.c src/ribbon.c $(HDRS) | $(B)
+	$(CC) $(CFLAGS) -o $@ tools/calibrate.c src/rb_hash.c $(LDLIBS)
+
+calibrate: $(B)/calibrate  ## regenerate the default-overhead table (slow: minutes)
+	./$(B)/calibrate 7 24
 
 clean:
 	rm -rf $(B)

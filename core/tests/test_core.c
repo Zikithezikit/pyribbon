@@ -264,6 +264,51 @@ static void test_default_overhead(void) {
   }
 }
 
+/* ---- seeds give independent hash universes, even for dense integer keys ---- */
+static int cmp_u64(const void *a, const void *b) {
+  uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+  return x < y ? -1 : x > y;
+}
+static void test_seed_independence(void) {
+  /* Mixing the seed in by XOR made {i ^ seed} nearly the same set for nearby seeds, so seed 1 rebuilt (almost)
+   * the filter of seed 0 for keys 0..n-1. Guard: the hash sets must be disjoint and the false positives independent. */
+  const size_t n = 20000, probes = 200000;
+  uint64_t *a = make_hashes(n, 0, 0), *b = make_hashes(n, 1, 0);
+  uint64_t *a2 = (uint64_t *)malloc(n * sizeof *a2), *b2 = (uint64_t *)malloc(n * sizeof *b2);
+  memcpy(a2, a, n * sizeof *a2);
+  memcpy(b2, b, n * sizeof *b2);
+  qsort(a2, n, sizeof *a2, cmp_u64);
+  qsort(b2, n, sizeof *b2, cmp_u64);
+  size_t i = 0, j = 0, common = 0;
+  while (i < n && j < n) {
+    if (a2[i] == b2[j]) { common++; i++; j++; }
+    else if (a2[i] < b2[j]) i++;
+    else j++;
+  }
+  CHECK_EQ(common, 0u);
+  rb_params p = rb_params_default();
+  p.fp_bits = 4;
+  rb_filter *fa = NULL, *fb = NULL;
+  p.seed = 0;
+  CHECK_EQ(rb_build(a, n, &p, &fa, NULL), RB_OK);
+  p.seed = 1;
+  CHECK_EQ(rb_build(b, n, &p, &fb, NULL), RB_OK);
+  if (fa && fb) {
+    size_t both = 0;
+    for (size_t k = 0; k < probes; k++) {
+      int in_a = rb_contains(fa, rb_hash_i64((int64_t)(n + k), 0));
+      int in_b = rb_contains(fb, rb_hash_i64((int64_t)(n + k), 1));
+      both += (size_t)(in_a && in_b);
+    }
+    printf("  seed independence: %zu of %zu probes are false positives in both filters (expected ~%zu)\n", both, probes,
+           probes / 256);
+    CHECK(both > 400 && both < 1200); /* independent: 781 +- 28; identical filters would give ~12500 */
+  }
+  rb_free(fa);
+  rb_free(fb);
+  free(a); free(b); free(a2); free(b2);
+}
+
 /* ---- statistical false-positive rate ---- */
 static void test_fpr(void) {
   const size_t n = 20000, probes = 2000000;
@@ -451,6 +496,7 @@ int main(void) {
   test_failure_is_reported();
   test_param_validation();
   test_default_overhead();
+  test_seed_independence();
   test_fpr();
   test_roundtrip_and_view();
   test_loader_hostile();

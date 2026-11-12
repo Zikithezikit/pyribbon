@@ -58,21 +58,24 @@ const char *rb_strerror(rb_status status) {
 /* ------------------------------------------------------------------------------------ */
 /* sizing                                                                               */
 
-/* Overhead (extra rows / n) for ~95% per-attempt success, indexed by k = floor(log2 n) - 7 for
- * k = 7..22. Measured with benchmarks/research/sim_width.c (w = 64) plus a 0.3 pp margin and
- * monotone smoothing; regenerated against the real core by `make ovh-sweep`. */
-static const double rb_overhead_table[16] = {0.061, 0.052, 0.052, 0.050, 0.054, 0.059, 0.067, 0.072,
-                                             0.083, 0.091, 0.099, 0.102, 0.111, 0.118, 0.124, 0.130};
-/* Beyond 2^22 the overhead is extrapolated at the measured slope (0.56 pp per doubling, rounded up). */
-#define RB_OVERHEAD_SLOPE 0.006
+/* Overhead (extra rows / n) at n = 2^k for k = 7..24, target 97% per-attempt success (expected attempts ~1.03).
+ * Measured with the real derivation and insertion code: `make calibrate` (core/tools/calibrate.c, 357..6000 trials per
+ * size) converted by core/tools/overhead_table.py from the 3rd percentile of the fill reached at first failure. */
+#define RB_OVERHEAD_FIRST_K 7u
+#define RB_OVERHEAD_LAST_K 24u
+static const double rb_overhead_table[18] = {0.066, 0.054, 0.054, 0.053, 0.058, 0.064, 0.071, 0.078, 0.087, 0.095, 0.101, 0.109, 0.115, 0.125, 0.134, 0.139, 0.148, 0.155};
+/* Above 2^24 slots the overhead is extrapolated at the measured slope of the last octaves (0.7 pp per doubling). */
+#define RB_OVERHEAD_SLOPE 0.007
 
 double rb_default_overhead(uint64_t n) {
   if (n <= 128) return rb_overhead_table[0];
   unsigned k = 0;
   for (uint64_t t = n; t > 1; t >>= 1) k++;
   double frac = (double)(n - (UINT64_C(1) << k)) / (double)(UINT64_C(1) << k); /* n = 2^k (1 + frac) */
-  if (k >= 22) return rb_overhead_table[15] + RB_OVERHEAD_SLOPE * ((double)(k - 22) + frac);
-  return rb_overhead_table[k - 7] + frac * (rb_overhead_table[k - 6] - rb_overhead_table[k - 7]);
+  if (k >= RB_OVERHEAD_LAST_K)
+    return rb_overhead_table[RB_OVERHEAD_LAST_K - RB_OVERHEAD_FIRST_K] + RB_OVERHEAD_SLOPE * ((double)(k - RB_OVERHEAD_LAST_K) + frac);
+  double lo = rb_overhead_table[k - RB_OVERHEAD_FIRST_K], hi = rb_overhead_table[k + 1u - RB_OVERHEAD_FIRST_K];
+  return lo + frac * (hi - lo);
 }
 
 static uint64_t rb_round_up64(uint64_t x) { return (x + 63u) & ~UINT64_C(63); }
