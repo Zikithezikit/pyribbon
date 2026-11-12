@@ -79,7 +79,8 @@ int main(int argc, char **argv) {
   for (unsigned long it = 0; it < iters; it++) {
     unsigned s = (unsigned)(rnd() % 4);
     size_t len = lens[s];
-    uint8_t *buf = (uint8_t *)malloc(len + 80);
+    /* worst case: 4 mutations, each of which may append up to 70 bytes (case 3 below) */
+    uint8_t *buf = (uint8_t *)malloc(len + 4 * 70 + 8);
     memcpy(buf, seeds[s], len);
     unsigned muts = 1u + (unsigned)(rnd() % 4);
     for (unsigned m = 0; m < muts; m++) {

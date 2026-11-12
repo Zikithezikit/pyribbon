@@ -36,7 +36,11 @@ jobs:
       CC: clang
     steps:
       - uses: actions/checkout@v7
-      # Uses libFuzzer when the clang runtime is present, otherwise the built-in mutation driver (same harness).
+      - name: Install the libFuzzer runtime (the job falls back to the built-in mutation driver if this fails)
+        run: |
+          v=$(clang --version | sed -n 's/.*version \([0-9]*\)\..*/\1/p' | head -1)
+          sudo apt-get update -qq && sudo apt-get install -y -qq "libclang-rt-${v}-dev" || echo "libFuzzer runtime not installed"
+      # libFuzzer when the runtime is present (60 s), otherwise the built-in mutation driver (same harness).
       - run: make -C core fuzz FUZZ_ITERS=20000000
 
   python:
@@ -51,15 +55,16 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -e '.[dev]'
+      - name: Virtualenv and editable install (the same two commands as in CONTRIBUTING.md)
+        run: make venv install-dev
       - name: Lint
         run: make lint
       - name: Docstrings (Google style)
         run: make docstyle
       - name: Type check (mypy strict) and stubtest against the compiled module
         run: make typecheck
-      - name: Tests (statistical tests excluded; they run in stats.yml)
-        run: pytest -m "not slow"
+      - name: Tests (the statistical tests run in stats.yml)
+        run: make pytest ARGS="-m 'not slow'"
 
   other-os:
     name: ${{ matrix.os }} (compiler and bit-op coverage)
