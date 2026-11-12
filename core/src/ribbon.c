@@ -59,34 +59,42 @@ const char *rb_strerror(rb_status status) {
 /* ------------------------------------------------------------------------------------ */
 /* sizing                                                                               */
 
-/* Overhead (extra rows / n) at n = 2^k for k = 7..24, target 97% per-attempt success (expected attempts ~1.03).
- * Measured with the real derivation and insertion code: `make calibrate` (core/tools/calibrate.c, 357..6000 trials per
- * size) converted by core/tools/overhead_table.py from the 3rd percentile of the fill reached at first failure. */
+/* Overhead (extra rows / n, in parts per million) at n = 2^k for k = 7..24, target 97% per-attempt success (expected
+ * attempts ~1.03). Measured with the real derivation and insertion code: `make calibrate` (core/tools/calibrate.c,
+ * 357..6000 trials per size) converted by core/tools/overhead_table.py from the 3rd percentile of the fill reached at
+ * first failure. Sizing is integer arithmetic only, so the same keys give the same serialized bytes on every platform
+ * (no floating-point contraction can change a row count). */
+#define RB_PPM UINT64_C(1000000)
 #define RB_OVERHEAD_FIRST_K 7u
 #define RB_OVERHEAD_LAST_K 24u
-static const double rb_overhead_table[18] = {0.066, 0.054, 0.054, 0.053, 0.058, 0.064, 0.071, 0.078, 0.087, 0.095, 0.101, 0.109, 0.115, 0.125, 0.134, 0.139, 0.148, 0.155};
+static const int64_t rb_overhead_ppm_table[18] = {66000, 54000, 54000, 53000, 58000, 64000, 71000, 78000, 87000, 95000, 101000, 109000, 115000, 125000, 134000, 139000, 148000, 155000};
 /* Above 2^24 slots the overhead is extrapolated at the measured slope of the last octaves (0.7 pp per doubling). */
-#define RB_OVERHEAD_SLOPE 0.007
+#define RB_OVERHEAD_SLOPE_PPM 7000
 
-double rb_default_overhead(uint64_t n) {
-  if (n <= 128) return rb_overhead_table[0];
+static uint64_t rb_default_overhead_ppm(uint64_t n) {
+  if (n <= 128) return (uint64_t)rb_overhead_ppm_table[0];
   unsigned k = 0;
   for (uint64_t t = n; t > 1; t >>= 1) k++;
-  double frac = (double)(n - (UINT64_C(1) << k)) / (double)(UINT64_C(1) << k); /* n = 2^k (1 + frac) */
-  if (k >= RB_OVERHEAD_LAST_K)
-    return rb_overhead_table[RB_OVERHEAD_LAST_K - RB_OVERHEAD_FIRST_K] + RB_OVERHEAD_SLOPE * ((double)(k - RB_OVERHEAD_LAST_K) + frac);
-  double lo = rb_overhead_table[k - RB_OVERHEAD_FIRST_K], hi = rb_overhead_table[k + 1u - RB_OVERHEAD_FIRST_K];
-  return lo + frac * (hi - lo);
+  uint64_t base = UINT64_C(1) << k, rem = n - base; /* n = base + rem, 0 <= rem < base */
+  if (k >= RB_OVERHEAD_LAST_K) {
+    uint64_t last = (uint64_t)rb_overhead_ppm_table[RB_OVERHEAD_LAST_K - RB_OVERHEAD_FIRST_K];
+    return last + RB_OVERHEAD_SLOPE_PPM * (k - RB_OVERHEAD_LAST_K) + RB_OVERHEAD_SLOPE_PPM * rem / base;
+  }
+  int64_t lo = rb_overhead_ppm_table[k - RB_OVERHEAD_FIRST_K], hi = rb_overhead_ppm_table[k + 1u - RB_OVERHEAD_FIRST_K];
+  /* |hi - lo| < 2**14 and rem < 2**38, so the product fits in int64; division truncates toward zero */
+  return (uint64_t)(lo + (hi - lo) * (int64_t)rem / (int64_t)base);
 }
+
+double rb_default_overhead(uint64_t n) { return (double)rb_default_overhead_ppm(n) / 1e6; }
 
 static uint64_t rb_round_up64(uint64_t x) { return (x + 63u) & ~UINT64_C(63); }
 
-/* Rows for n keys: ceil(n (1 + eps)) rounded up to a multiple of 64, at least 128. */
-static rb_status rb_initial_rows(uint64_t n, double eps, uint64_t *rows) {
-  double want = (double)n * (1.0 + eps);
-  if (!(want < (double)RB_MAX_ROWS / 2.0)) return RB_E_TOO_LARGE;
-  uint64_t m = (uint64_t)want;
-  if ((double)m < want) m++;
+/* Rows for n keys: ceil(n (1 + overhead)) rounded up to a multiple of 64, at least 128. n <= 2**38 and
+ * overhead_ppm <= 4e6, so n * (1e6 + overhead_ppm) < 2**61: no overflow. */
+static rb_status rb_initial_rows(uint64_t n, uint64_t overhead_ppm, uint64_t *rows) {
+  uint64_t scaled = n * (RB_PPM + overhead_ppm);
+  uint64_t m = scaled / RB_PPM + (scaled % RB_PPM != 0);
+  if (m >= RB_MAX_ROWS / 2) return RB_E_TOO_LARGE;
   m = rb_round_up64(m);
   if (m < 2u * RB_WIDTH) m = 2u * RB_WIDTH;
   *rows = m;
@@ -188,9 +196,9 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
     return RB_OK;
   }
 
-  double eps = p.overhead < 0.0 ? rb_default_overhead(n) : p.overhead;
+  uint64_t overhead_ppm = p.overhead < 0.0 ? rb_default_overhead_ppm(n) : (uint64_t)(p.overhead * 1e6 + 0.5);
   uint64_t rows;
-  rb_status st = rb_initial_rows(n, eps, &rows);
+  rb_status st = rb_initial_rows(n, overhead_ppm, &rows);
   rb_slot *slots = NULL;
   uint64_t alloc_rows = 0;
   for (uint32_t attempt = 0; st == RB_OK && attempt < p.max_attempts; attempt++) {
@@ -316,7 +324,10 @@ rb_status rb_from_buffer(const void *buf, size_t len, int verify_payload, rb_fil
   *out = NULL;
   if (len < RB_HEADER_SIZE) return RB_E_TRUNCATED;
   if (!buf) return RB_E_INVALID_ARG;
-  const uint8_t *h = (const uint8_t *)buf;
+  /* Snapshot the header: every header byte is read exactly once, from this private copy, so a concurrent writer to the
+   * buffer cannot make validation and use see different values whatever the compiler does. */
+  uint8_t h[RB_HEADER_SIZE];
+  memcpy(h, buf, RB_HEADER_SIZE);
   if (memcmp(h, rb_magic, 8) != 0) return RB_E_MAGIC;
   if (rb_load_le16(h + 8) != RB_FORMAT_VERSION) return RB_E_VERSION;
   if (rb_load_le16(h + 10) != RB_HEADER_SIZE) return RB_E_FORMAT;
@@ -327,12 +338,14 @@ rb_status rb_from_buffer(const void *buf, size_t len, int verify_payload, rb_fil
   uint64_t num_keys = rb_load_le64(h + 16);
   uint64_t rows = rb_load_le64(h + 24);
   if (rows != 0 && ((rows & 63u) != 0 || rows < 2u * RB_WIDTH || rows > RB_MAX_ROWS)) return RB_E_FORMAT;
-  if (rows == 0 && num_keys != 0) return RB_E_FORMAT;
+  /* An empty filter has no keys and a non-empty one has between 1 and `rows` (rows >= keys for every filter rb_build
+   * makes, duplicates included); this also keeps len() of a loaded filter meaningful. */
+  if ((rows == 0) != (num_keys == 0) || num_keys > rows) return RB_E_FORMAT;
   uint64_t payload_len = (rows >> 6) * r * 8u; /* rows <= 2^40, r <= 32: at most 2^42, no overflow */
   uint64_t have = (uint64_t)len - RB_HEADER_SIZE;
   if (have < payload_len) return RB_E_TRUNCATED;
   if (have > payload_len) return RB_E_FORMAT; /* trailing bytes: slice the buffer to embed a filter */
-  const uint8_t *payload = h + RB_HEADER_SIZE;
+  const uint8_t *payload = (const uint8_t *)buf + RB_HEADER_SIZE;
   uint64_t checksum = rb_load_le64(h + 48);
   if (verify_payload && checksum != rb_xxh3_64(payload, (size_t)payload_len)) return RB_E_CHECKSUM;
 

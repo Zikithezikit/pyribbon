@@ -183,8 +183,12 @@ rb_status rb_serialize(const rb_filter *f, void *dst, size_t cap);
   POPCNT); and pure-C fallbacks (de Bruijn `ctz`, XOR-fold parity, 32x32 split multiply). The fallbacks are compiled
   and tested on Linux by forcing `-DRB_PORTABLE=1`. All integers are `uint64_t`/`uint32_t`, never `long` (32-bit on
   Win64). `load_le64` is `memcpy` plus a byte swap on big-endian hosts, so no unaligned or endianness assumption.
-* **Warnings:** `-std=c11 -Wall -Wextra -Wconversion -Wshadow -Wcast-align -Werror`. Overflow in `n·(1+ε)`, `m·r/8`,
-  and `m/64·r·8` is checked (`RB_E_TOO_LARGE`); `RB_MAX_KEYS` keeps slot indices in `size_t` safely.
+* **Warnings:** `-std=c11 -Wall -Wextra -Wconversion -Wshadow -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Werror`.
+* **Sizing is integer arithmetic.** The overhead table is stored in parts per million and interpolated with integer division, a
+  user `overhead=` is rounded once to whole ppm, and the row count is `ceil(n·(1e6 + ppm) / 1e6)`: no floating-point
+  contraction on any platform can change a row count, so the same keys, parameters and seed give the same bytes everywhere
+  (the Python reference mirrors the integer code and the byte-for-byte vectors cover it). `n ≤ RB_MAX_KEYS = 2^38` and
+  `ppm ≤ 4e6` keep `n·(1e6 + ppm)` below 2^61; rows above 2^39 are `RB_E_TOO_LARGE`. `rb_build` leaves `*info` untouched on failure.
 
 ## 5. Serialization (format v1, little-endian, all fields explicit)
 
@@ -197,8 +201,8 @@ rb_status rb_serialize(const rb_filter *f, void *dst, size_t cap);
 | 13 | 1 | `fp_bits` | 1..32 |
 | 14 | 1 | `hash_id` | 1 (§3) |
 | 15 | 1 | `flags` | 0; reserved bits must be zero |
-| 16 | 8 | `num_keys` | informational only (inputs counted, duplicates included); never used for addressing |
-| 24 | 8 | `num_rows` | 0, or a multiple of 64 and ≥ 128 |
+| 16 | 8 | `num_keys` | inputs counted, duplicates included; never used for addressing, but validated: 0 iff `num_rows == 0`, and ≤ `num_rows` (every filter `rb_build` makes has `num_rows ≥ num_keys`) |
+| 24 | 8 | `num_rows` | 0, or a multiple of 64 in [128, 2^40] |
 | 32 | 8 | `seed` | user seed |
 | 40 | 4 | `attempt` | seed index that succeeded |
 | 44 | 4 | reserved | 0 |
@@ -206,14 +210,19 @@ rb_status rb_serialize(const rb_filter *f, void *dst, size_t cap);
 | 56 | 8 | `header_xxh3` | XXH3-64 of bytes 0..55 |
 | 64 | `num_rows/64·r·8` | payload | for block `k`, `r` words; word `j` holds column `j` for rows `64k..64k+63`, row `64k+i` at bit `i` |
 
-Loader rules (**input is untrusted**): (1) `len ≥ 64`; (2) magic, version, `header_size`, `width_log2`, `fp_bits`
-range, `hash_id`, `flags`, reserved all exact; (3) `header_xxh3` matches; (4) `num_rows` is 0 or a multiple of 64
-and ≥ 128, and `num_rows == 0` implies an empty payload; (5) `payload_len = num_rows/64·r·8` computed with explicit
-overflow checks, and **`len == 64 + payload_len` exactly** (slice a memoryview to embed a filter in a larger buffer);
-(6) if `verify_payload`, `payload_xxh3` matches (reads every byte once). `from_buffer(verify=False)` skips only
-rule 6, which keeps an mmapped filter lazy; rules 1-5 are O(1) and always run, so even the unverified path cannot
-read out of bounds. Payload corruption under `verify=False` can only change query answers. The checksum detects
-accidents, not tampering (it is not a MAC); the README will say that.
+Loader rules (**input is untrusted**), checked in this order (the first failure decides the status, and
+`tests/spec_reference.py` mirrors the order): (1) `len ≥ 64`, else TRUNCATED; (2) magic (MAGIC), version (VERSION),
+`header_size == 64` (FORMAT); (3) `header_xxh3` matches (CHECKSUM); (4) `width_log2 == 6`, `hash_id == 1`, `flags == 0`,
+reserved `== 0`, `fp_bits` in 1..32 (FORMAT); (5) `num_rows` is 0 or a multiple of 64 in [128, 2^40] (FORMAT); (6) `num_keys`
+is 0 iff `num_rows == 0`, and `num_keys ≤ num_rows` (FORMAT; this keeps `len()` of a loaded filter meaningful);
+(7) `payload_len = num_rows/64·r·8` (at most 2^42, so it cannot overflow 64 bits given rule 5), the buffer holds fewer
+bytes (TRUNCATED) or more (FORMAT: slice a memoryview to embed a filter in a larger buffer) than `64 + payload_len`;
+(8) if `verify_payload`, `payload_xxh3` matches (CHECKSUM; reads every byte once). `from_buffer(verify=False)` skips only
+rule 8, which keeps an mmapped filter lazy; rules 1-7 are O(1) and always run, so even the unverified path cannot read out of
+bounds. The loader copies the 64 header bytes into a local buffer first and parses only that copy, so a concurrent writer to
+the buffer cannot make validation and use see different header values. Payload corruption under `verify=False` can only change
+query answers (`attempt` is also taken as-is). The checksum detects accidents, not tampering (it is not a MAC), and a file
+truncated by another process while memory-mapped faults on access (SIGBUS), which no library can prevent.
 
 Zero copy: a loaded filter keeps a pointer into the caller's buffer; the payload is read with `load_le64`, so the same
 file works on little- and big-endian hosts without a conversion pass. Nothing is allocated per query.
@@ -235,7 +244,7 @@ and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
 * **Free-threaded** (3.14t) has no abi3 and I will not declare `Py_MOD_GIL_NOT_USED` before testing it: v0.1 skips
   `*t-*` wheels, so a free-threaded interpreter builds from the sdist and re-enables the GIL on import. Roadmap item.
 * **GIL.** Single-key `__contains__` never releases the GIL (the save/restore costs more than the ~30 ns of work, R§12).
-  `build` hashes keys with the GIL held (it touches Python objects), then **releases the GIL for banding and back
+  `build` hashes keys with the GIL held (it touches Python objects; the integer-buffer path below hashes without it), then **releases the GIL for banding and back
   substitution** (pure C, can take seconds). `contains_many` hashes into a temporary array with the GIL held and
   releases it for the probe loop when the batch is ≥ 1024 keys (an untuned threshold; a 4-thread test shows about 1.7x
   the single-thread time, against about 4x with the GIL held). Between the
@@ -250,6 +259,16 @@ and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
   `bytearray` or a writable `mmap` are not blocked** and would silently change query answers (memory-safe, but
   false negatives are possible). The docs say "do not mutate the buffer"; a read-only source (`bytes`, `mmap.ACCESS_READ`) is the
   recommended path. I do not reject writable buffers, because the default `mmap` mode is writable.
+* **Length hints.** `__len__` of `keys` is only a hint: it may lie or be astronomically large (`range(2**61)`), so the
+  preallocation is capped at 2^20 keys and growth is geometric; a `__len__` that raises `TypeError` means "unsized" and is
+  ignored, any other exception (including `KeyboardInterrupt`) propagates. An uncapped `hint * 8` once wrapped to 0 bytes and
+  corrupted the heap (found by the independent review; regression-tested with hints up to 2^63-1).
+* **`int` subclasses** are hashed by value: the bigint encoding runs on the exact `int` (`PyNumber_Index`), so a subclass that
+  overrides `bit_length` or `to_bytes` cannot change a key's hash.
+* **Subinterpreters.** The module keeps all state in per-module state and has no mutable globals, but the abi3 wheel targets the
+  3.11 limited API, where the `Py_mod_multiple_interpreters` slot does not exist: isolated (own-GIL) subinterpreters on 3.12+
+  refuse the import; shared-GIL subinterpreters work (sanitizer-clean). Exception types fall back to `RuntimeError` if a
+  filter outlives module teardown.
 * **GC.** A filter made by `from_buffer` holds a reference to the buffer's owner, which could refer back to it, so the type is
   GC-tracked (traverse + clear, like `memoryview`). `tp_clear` frees the core filter *before* releasing the buffer and leaves
   the object in a released state in which every method raises `ValueError`. Found by the leak tests.

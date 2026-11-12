@@ -23,25 +23,25 @@ KIND_BYTES, KIND_STR, KIND_BIGINT = 0, 1, 2
 MAGIC = b"PYRIBBON"
 HEADER_SIZE = 64
 MAX_ROWS = 1 << 40
-OVERHEAD_TABLE = [
-    0.066,
-    0.054,
-    0.054,
-    0.053,
-    0.058,
-    0.064,
-    0.071,
-    0.078,
-    0.087,
-    0.095,
-    0.101,
-    0.109,
-    0.115,
-    0.125,
-    0.134,
-    0.139,
-    0.148,
-    0.155,
+OVERHEAD_PPM = [
+    66000,
+    54000,
+    54000,
+    53000,
+    58000,
+    64000,
+    71000,
+    78000,
+    87000,
+    95000,
+    101000,
+    109000,
+    115000,
+    125000,
+    134000,
+    139000,
+    148000,
+    155000,
 ]
 
 
@@ -114,15 +114,28 @@ def derive(h: int, attempt: int, num_rows: int, r: int) -> tuple[int, int, int]:
     return (z0 * (num_rows - 63)) >> 64, z1 | 1, z2 >> (64 - r)
 
 
-def default_overhead(n: int) -> float:
-    """Mirror of ``rb_default_overhead``."""
+def _trunc_div(a: int, b: int) -> int:
+    """Integer division truncating toward zero, as C does."""
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b > 0) else -q
+
+
+def default_overhead_ppm(n: int) -> int:
+    """Mirror of the integer sizing table in ``ribbon.c`` (parts per million)."""
     if n <= 128:
-        return OVERHEAD_TABLE[0]
+        return OVERHEAD_PPM[0]
     k = n.bit_length() - 1
-    frac = (n - (1 << k)) / (1 << k)
+    base = 1 << k
+    rem = n - base
     if k >= 24:
-        return OVERHEAD_TABLE[17] + 0.007 * ((k - 24) + frac)
-    return OVERHEAD_TABLE[k - 7] + frac * (OVERHEAD_TABLE[k - 6] - OVERHEAD_TABLE[k - 7])
+        return OVERHEAD_PPM[17] + 7000 * (k - 24) + 7000 * rem // base
+    lo, hi = OVERHEAD_PPM[k - 7], OVERHEAD_PPM[k - 6]
+    return lo + _trunc_div((hi - lo) * rem, base)
+
+
+def default_overhead(n: int) -> float:
+    """Return the default overhead as a fraction (the table value in ppm divided by 1e6)."""
+    return default_overhead_ppm(n) / 1e6
 
 
 def _round_up64(x: int) -> int:
@@ -130,11 +143,9 @@ def _round_up64(x: int) -> int:
 
 
 def initial_rows(n: int, eps: float) -> int:
-    """Return the initial row count for ``n`` keys."""
-    want = n * (1.0 + eps)
-    m = int(want)
-    if m < want:
-        m += 1
+    """Return the initial row count for ``n`` keys at overhead ``eps`` (a fraction, rounded to whole ppm)."""
+    scaled = n * (1_000_000 + int(eps * 1e6 + 0.5))
+    m = -(-scaled // 1_000_000)
     return max(_round_up64(m), 128)
 
 
@@ -225,7 +236,7 @@ def parse(buf: bytes, verify: bool = True) -> dict[str, int]:
         raise ReferenceError("FORMAT")
     if rows != 0 and (rows % 64 != 0 or rows < 128 or rows > MAX_ROWS):
         raise ReferenceError("FORMAT")
-    if rows == 0 and num_keys != 0:
+    if (rows == 0) != (num_keys == 0) or num_keys > rows:
         raise ReferenceError("FORMAT")
     payload_len = (rows // 64) * r * 8
     have = len(buf) - HEADER_SIZE
@@ -301,6 +312,13 @@ def generate_vectors() -> str:
     for h, a, rows, r in cases:
         s, c, fp = derive(h, a, rows, r)
         out.append(f"  {{0x{h:x}ull, {a}u, {rows}ull, {r}u, {s}ull, 0x{c:x}ull, {fp}u}},")
+    out.append("};")
+    out.append("typedef struct { unsigned long long n; unsigned long long ppm; } vec_ppm;")
+    out.append("static const vec_ppm vec_ppm_tbl[] = {")
+    ns = [1, 100, 128, 129, 130, 1000, 4097, 12345, 99999, 100000, 1000000, 1500000, 2**24 - 1, 2**24, 2**24 + 12345,
+          2**26 + 7, 10**9, 2**37 + 5]  # fmt: skip
+    for n in ns:
+        out.append(f"  {{{n}ull, {default_overhead_ppm(n)}ull}},")
     out.append("};")
     # whole-filter vectors: C must reproduce the serialized bytes exactly
     out.append("typedef struct { unsigned n; unsigned r; unsigned long long seed; double overhead; "

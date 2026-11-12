@@ -106,11 +106,9 @@ def exercise(f: RibbonFilter, buf: bytes, meta: dict[str, int], ref_probes: int 
     """An accepted filter must be self-consistent and survive queries, whatever bytes its payload holds."""
     assert f.fp_bits == meta["fp_bits"]
     assert f.size_in_bytes == len(buf) and f.to_bytes() == buf
-    if meta["num_keys"] <= 2**63 - 1:
-        assert len(f) == meta["num_keys"]
-    else:
-        with pytest.raises(OverflowError):
-            len(f)
+    assert len(f) == meta["num_keys"] and bool(f) == (
+        meta["num_keys"] > 0
+    )  # num_keys <= num_rows: len() is always sane
     answers = [p in f for p in PROBES]
     assert f.contains_many(PROBES) == answers
     if meta["num_rows"] == 0:
@@ -254,6 +252,10 @@ _FIELD_CASES: list[tuple[str, dict[str, int | bytes], str]] = [
     ("rows 128 leaves trailing bytes", {"num_rows": 128}, "FORMAT"),
     ("rows 320 needs more payload", {"num_rows": 320}, "TRUNCATED"),
     ("rows 0 with num_keys != 0", {"num_rows": 0}, "FORMAT"),
+    *(
+        (f"num_keys {v} inconsistent with 256 rows", {"num_keys": v}, "FORMAT")
+        for v in (0, 257, 2**32, 2**63 - 1, 2**63, 2**64 - 1)
+    ),
     ("rows 0, no keys, payload still attached", {"num_rows": 0, "num_keys": 0}, "FORMAT"),
     *((f"fp_bits {r}", {"fp_bits": r}, "FORMAT") for r in (0, 33, 64, 128, 255)),
     ("fp_bits 7 leaves trailing bytes", {"fp_bits": 7}, "FORMAT"),
@@ -310,7 +312,7 @@ def test_bad_rows_beat_a_bad_payload_checksum() -> None:
 
 _VALID_CASES: list[tuple[str, bytes]] = [
     ("untouched", _BASE),
-    *((f"num_keys {v}", with_fields(_BASE, num_keys=v)) for v in (0, 1, 2**32, 2**63 - 1, 2**63, 2**64 - 1)),
+    *((f"num_keys {v} (1 .. rows)", with_fields(_BASE, num_keys=v)) for v in (1, 100, 255, 256)),
     *((f"seed {v}", with_fields(_BASE, seed=v)) for v in (0, 1, 2**63, 2**64 - 1)),
     *((f"attempt {v}", with_fields(_BASE, attempt=v)) for v in (1, 31, 255, 2**31, 2**32 - 1)),
     ("128 rows, 32 bits", hand_built(128, 32)),
@@ -319,7 +321,6 @@ _VALID_CASES: list[tuple[str, bytes]] = [
     ("2**20 rows, 1 bit", hand_built(2**20, 1)),
     ("empty filter", hand_built(0, 8, num_keys=0)),
     ("empty filter, odd seed and attempt", hand_built(0, 32, num_keys=0, seed=2**64 - 1, attempt=2**32 - 1)),
-    ("rows set but num_keys 0 is informational only", with_fields(_BASE, num_keys=0)),
 ]
 
 

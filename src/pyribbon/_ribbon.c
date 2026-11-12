@@ -18,6 +18,7 @@
 #include "ribbon.h"
 
 #define BATCH_NOGIL_THRESHOLD 1024 /* contains_many releases the GIL from this many keys on */
+#define MAX_HINT_PREALLOC ((size_t)1 << 20) /* keys preallocated from a length hint, at most */
 
 typedef struct {
   PyObject *ribbon_error;
@@ -65,13 +66,23 @@ static int hash_int(PyObject *value, uint64_t seed, uint64_t *out) {
     *out = rb_hash_i64((int64_t)x, seed);
     return 0;
   }
-  /* outside int64: little-endian two's complement of length bit_length // 8 + 1, hashed as bytes */
+  /* outside int64: little-endian two's complement of length bit_length // 8 + 1, hashed as bytes. An int subclass may
+   * override bit_length / to_bytes, so work on the exact int (PyNumber_Index returns one since 3.10). */
   int rc = -1;
+  PyObject *exact = PyNumber_Index(value);
+  if (!exact) return -1;
+  value = exact;
   PyObject *bits = PyObject_CallMethod(value, "bit_length", NULL);
-  if (!bits) return -1;
+  if (!bits) {
+    Py_DECREF(exact);
+    return -1;
+  }
   Py_ssize_t nbits = PyLong_AsSsize_t(bits);
   Py_DECREF(bits);
-  if (nbits < 0 && PyErr_Occurred()) return -1;
+  if (nbits < 0 && PyErr_Occurred()) {
+    Py_DECREF(exact);
+    return -1;
+  }
   Py_ssize_t length = nbits / 8 + 1;
   PyObject *method = PyObject_GetAttrString(value, "to_bytes");
   PyObject *args = method ? Py_BuildValue("(ns)", length, "little") : NULL;
@@ -89,6 +100,7 @@ static int hash_int(PyObject *value, uint64_t seed, uint64_t *out) {
   Py_XDECREF(kwargs);
   Py_XDECREF(args);
   Py_XDECREF(method);
+  Py_DECREF(exact);
   return rc;
 }
 
@@ -195,17 +207,28 @@ static int int_array_layout(const Py_buffer *v, int *is_signed) {
   }
 }
 
+/* Value of a `size`-byte two's-complement item held in the low bytes of `raw`, using only fully defined conversions. */
+static int64_t sign_extend(uint64_t raw, int size) {
+  uint64_t sign = UINT64_C(1) << (8 * size - 1);
+  uint64_t low = raw & (sign - 1);
+  if (!(raw & sign)) return (int64_t)low; /* low < 2**63 */
+  return -(int64_t)(sign - 1 - low) - 1;  /* low - sign, without overflow (sign - 1 - low <= 2**63 - 1) */
+}
+
 static void hash_int_array(const unsigned char *data, size_t count, int size, int is_signed, uint64_t seed,
                            uint64_t *out) {
+  const unsigned one = 1;
+  const int little_endian = *(const unsigned char *)&one == 1; /* run-time test: no reliance on compiler macros */
   for (size_t i = 0; i < count; i++) {
     uint64_t raw = 0;
-    memcpy(&raw, data + i * (size_t)size, (size_t)size); /* native byte order, any alignment */
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    raw >>= 8 * (8 - size);
-#endif
+    if (little_endian) {
+      memcpy(&raw, data + i * (size_t)size, (size_t)size); /* any alignment */
+    } else {
+      memcpy((unsigned char *)&raw + (8 - size), data + i * (size_t)size, (size_t)size); /* bytes land high: value is raw >> .. */
+      raw >>= 8 * (8 - size);
+    }
     if (is_signed) {
-      int shift = 64 - 8 * size; /* sign-extend from the item width */
-      out[i] = rb_hash_i64((int64_t)(raw << shift) >> shift, seed);
+      out[i] = rb_hash_i64(sign_extend(raw, size), seed);
     } else if (raw < (UINT64_C(1) << 63)) {
       out[i] = rb_hash_i64((int64_t)raw, seed);
     } else { /* uint64 >= 2**63 is outside int64: the canonical 9-byte little-endian encoding, as for a Python int */
@@ -223,7 +246,11 @@ static int collect_int_array(PyObject *keys, uint64_t seed, HashVec *hv) {
     return 0;
   Py_buffer view;
   if (PyObject_GetBuffer(keys, &view, PyBUF_FORMAT | PyBUF_C_CONTIGUOUS) < 0) {
-    PyErr_Clear(); /* e.g. a strided numpy slice: the generic iteration path still handles it */
+    /* A strided numpy slice (ValueError), a non-contiguous view (BufferError), an object that exports no buffer
+     * (TypeError): the generic iteration path still handles them. Only MemoryError and non-Exception errors
+     * (KeyboardInterrupt, SystemExit) propagate. */
+    if (PyErr_ExceptionMatches(PyExc_MemoryError) || !PyErr_ExceptionMatches(PyExc_Exception)) return -1;
+    PyErr_Clear();
     return 0;
   }
   int is_signed = 0;
@@ -233,6 +260,11 @@ static int collect_int_array(PyObject *keys, uint64_t seed, HashVec *hv) {
     return 0;
   }
   size_t count = (size_t)view.len / (size_t)size;
+  if (count > SIZE_MAX / sizeof(uint64_t)) { /* possible with a huge 1-byte-item buffer where size_t is 32 bits */
+    PyBuffer_Release(&view);
+    PyErr_NoMemory();
+    return -1;
+  }
   uint64_t *data = (uint64_t *)malloc(count ? count * sizeof(uint64_t) : 1);
   if (!data) {
     PyBuffer_Release(&view);
@@ -253,16 +285,20 @@ static int collect_hashes(PyObject *keys, uint64_t seed, HashVec *hv, const char
   if (handled != 0) return handled < 0 ? -1 : 0;
   if (reject_single_key(keys, what) < 0) return -1;
   Py_ssize_t hint = PyObject_Size(keys);
-  if (hint < 0) { /* generators and other unsized iterables */
+  if (hint < 0) { /* generators and other unsized iterables raise TypeError; any other exception is real */
+    if (!PyErr_ExceptionMatches(PyExc_TypeError)) return -1;
     PyErr_Clear();
     hint = 0;
   }
   PyObject *it = PyObject_GetIter(keys);
   if (!it) return -1;
   if (hint > 0) {
-    hv->data = (uint64_t *)malloc((size_t)hint * sizeof(uint64_t));
+    /* __len__ is only a hint (it may lie, or be astronomically large): cap the preallocation, growth does the rest.
+     * cap always describes the real allocation. */
+    size_t want = (size_t)hint < MAX_HINT_PREALLOC ? (size_t)hint : MAX_HINT_PREALLOC;
+    hv->data = (uint64_t *)malloc(want * sizeof(uint64_t));
     if (!hv->data) { Py_DECREF(it); PyErr_NoMemory(); return -1; }
-    hv->cap = (size_t)hint;
+    hv->cap = want;
   }
   PyObject *item;
   while ((item = PyIter_Next(it)) != NULL) {
@@ -279,12 +315,15 @@ static int collect_hashes(PyObject *keys, uint64_t seed, HashVec *hv, const char
 /* ------------------------------------------------------------------------------------------------- */
 /* error mapping                                                                                     */
 
+/* The exception type, or RuntimeError if the module state was already cleared (interpreter finalization). */
+static PyObject *exc_type(PyObject *type) { return type ? type : PyExc_RuntimeError; }
+
 static PyObject *raise_status(ModState *st, rb_status status) {
   switch (status) {
     case RB_E_NOMEM: return PyErr_NoMemory();
     case RB_E_INVALID_ARG:
     case RB_E_TOO_LARGE: PyErr_SetString(PyExc_ValueError, rb_strerror(status)); return NULL;
-    default: PyErr_Format(st->format_error, "invalid pyribbon data: %s", rb_strerror(status)); return NULL;
+    default: PyErr_Format(exc_type(st->format_error), "invalid pyribbon data: %s", rb_strerror(status)); return NULL;
   }
 }
 
@@ -350,7 +389,7 @@ static PyObject *Filter_new(PyTypeObject *type, PyObject *args, PyObject *kwds) 
   size_t n = hv.len;
   free(hv.data);
   if (status == RB_E_CONSTRUCT) {
-    PyErr_Format(st->construction_error,
+    PyErr_Format(exc_type(st->construction_error),
                  "could not build a filter for %zu keys in %d attempts (fp_bits=%d); "
                  "raise overhead= or max_attempts=, or change seed=",
                  n, max_attempts, fp_bits);

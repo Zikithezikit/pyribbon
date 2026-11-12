@@ -7,6 +7,9 @@ import copy
 import importlib.metadata
 import mmap
 import pickle
+import struct
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -380,3 +383,104 @@ def test_numpy_interop() -> None:
     with pytest.raises(TypeError):
         RibbonFilter(np.zeros((3, 3), dtype="int64"))  # 2-D: rows are not keys
     assert np.int64(5) in RibbonFilter([5])  # numpy scalars are ints through __index__
+
+
+# ---- regressions for the independent review (see DESIGN.md section 6) ----------------------------------------------
+
+
+class _LyingLen:
+    """Iterates a few keys but claims an enormous length: ``__len__`` is only a hint."""
+
+    def __init__(self, claimed: int, items: list[int]) -> None:
+        self.claimed, self.items = claimed, items
+
+    def __len__(self) -> int:
+        return self.claimed
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self.items)
+
+
+@pytest.mark.parametrize("claimed", [2**20 + 1, 2**31, 2**32 + 1, 2**60, 2**61, 2**61 + 1, 2**62, 2**63 - 1])
+def test_huge_length_hint_cannot_corrupt_memory(claimed: int) -> None:
+    # 2**61 * 8 wrapped to 0 bytes in the preallocation and the first writes went past the allocation
+    keys = list(range(1000))
+    f = RibbonFilter(_LyingLen(claimed, keys), fp_bits=32)
+    assert len(f) == 1000 and all(k in f for k in keys)
+    assert f.contains_many(_LyingLen(claimed, keys)) == [True] * 1000
+    assert f.contains_many(_LyingLen(claimed, [10**6])) == [False]
+
+
+def test_errors_from_len_are_not_swallowed() -> None:
+    class Raises:
+        def __init__(self, exc: BaseException) -> None:
+            self.exc = exc
+
+        def __len__(self) -> int:
+            raise self.exc
+
+        def __iter__(self) -> Iterator[int]:
+            return iter([1, 2, 3])
+
+    with pytest.raises(KeyboardInterrupt):
+        RibbonFilter(Raises(KeyboardInterrupt()))
+    with pytest.raises(ValueError, match="boom"):
+        RibbonFilter([1]).contains_many(Raises(ValueError("boom")))
+    f = RibbonFilter(Raises(TypeError("unsized")))  # TypeError means "no length": a plain iterable
+    assert len(f) == 3
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="Python-level __buffer__ needs PEP 688 (3.12)")
+def test_errors_from_buffer_export_are_not_swallowed() -> None:
+    class Interrupting:
+        def __buffer__(self, flags: int) -> memoryview:
+            raise KeyboardInterrupt
+
+        def __iter__(self) -> Iterator[int]:
+            return iter([1])
+
+    with pytest.raises(KeyboardInterrupt):
+        RibbonFilter(Interrupting())  # type: ignore[arg-type]
+
+
+def test_int_subclasses_hash_like_plain_ints() -> None:
+    class Weird(int):
+        def bit_length(self) -> int:  # type: ignore[override]
+            return 10**18
+
+        def to_bytes(self, *args: object, **kwargs: object) -> bytes:  # type: ignore[override]
+            return b"junk"
+
+    for value in (2**63, 2**64, 2**70, -(2**63) - 1, -(2**71), 2**200):
+        plain = RibbonFilter([value], fp_bits=32)
+        assert Weird(value) in plain
+        assert RibbonFilter([Weird(value)], fp_bits=32).to_bytes() == plain.to_bytes()
+        assert plain.contains_many([Weird(value)]) == [True]
+
+
+def _with_header(blob: bytes, **fields: int) -> bytes:
+    """Rewrite header fields (num_keys at 16, num_rows at 24) and repair the header checksum."""
+    out = bytearray(blob)
+    offsets = {"num_keys": 16, "num_rows": 24}
+    for name, value in fields.items():
+        struct.pack_into("<Q", out, offsets[name], value)
+    struct.pack_into("<Q", out, 56, ref.xxh3(bytes(out[:56])))
+    return bytes(out)
+
+
+def test_loader_rejects_inconsistent_key_counts() -> None:
+    blob = RibbonFilter(range(500)).to_bytes()
+    rows = struct.unpack_from("<Q", blob, 24)[0]
+    for keys in (0, rows + 1, 2**63, 2**64 - 1):
+        with pytest.raises(FormatError):
+            RibbonFilter.from_buffer(_with_header(blob, num_keys=keys), verify=False)
+        assert pytest.raises(ref.ReferenceError, ref.parse, _with_header(blob, num_keys=keys)).value.status == "FORMAT"
+    for keys in (1, 500, rows):
+        g = RibbonFilter.from_buffer(_with_header(blob, num_keys=keys), verify=False)
+        assert len(g) == keys and bool(g)  # len() and bool() of any loadable filter are sane
+
+
+def test_sizing_is_integer_arithmetic_and_matches_the_reference() -> None:
+    for n in (1, 127, 128, 129, 1000, 12345, 99_999, 100_000, 250_000):
+        rows, _, _ = ref.build([ref.hash_int(i, 0) for i in range(n)])
+        assert RibbonFilter(range(n)).size_in_bytes == 64 + rows  # r = 8: payload bytes == rows

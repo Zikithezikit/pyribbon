@@ -252,6 +252,12 @@ static void test_param_validation(void) {
   CHECK(strlen(rb_strerror(RB_E_CHECKSUM)) > 0);
 }
 
+/* ---- the sizing table is integer arithmetic and must match the Python reference exactly ---- */
+static void test_default_overhead_ppm_vectors(void) {
+  for (size_t i = 0; i < sizeof vec_ppm_tbl / sizeof *vec_ppm_tbl; i++)
+    CHECK_EQ((uint64_t)(rb_default_overhead(vec_ppm_tbl[i].n) * 1e6 + 0.5), vec_ppm_tbl[i].ppm);
+}
+
 /* ---- default overhead table ---- */
 static void test_default_overhead(void) {
   double prev = 0.0;
@@ -460,6 +466,17 @@ static void test_loader_hostile(void) {
   rb_store_le64(tiny + 24, 64);
   fix_header_checksum(tiny);
   CHECK_EQ(load(tiny, sizeof tiny, 0), RB_E_FORMAT);
+  /* num_keys must be consistent with rows: non-empty filters have 1..rows keys, empty ones none */
+  const uint64_t rows_good = rb_load_le64(good + 24);
+  const struct { uint64_t keys; rb_status want; } key_cases[] = {
+      {0, RB_E_FORMAT}, {1, RB_OK}, {rows_good, RB_OK}, {rows_good + 1, RB_E_FORMAT},
+      {UINT64_C(1) << 63, RB_E_FORMAT}, {~UINT64_C(0), RB_E_FORMAT}};
+  for (size_t t = 0; t < sizeof key_cases / sizeof *key_cases; t++) {
+    memcpy(bad, good, sz);
+    rb_store_le64(bad + 16, key_cases[t].keys);
+    fix_header_checksum(bad);
+    CHECK_EQ(load(bad, sz, 0), key_cases[t].want);
+  }
   /* a valid-looking header that declares a 2^40-row payload on a 64-byte buffer must be truncated, not read */
   memcpy(bad, good, RB_HEADER_SIZE);
   rb_store_le64(bad + 24, UINT64_C(1) << 40);
@@ -496,6 +513,7 @@ int main(void) {
   test_failure_is_reported();
   test_param_validation();
   test_default_overhead();
+  test_default_overhead_ppm_vectors();
   test_seed_independence();
   test_fpr();
   test_roundtrip_and_view();
