@@ -214,9 +214,9 @@ Python (`make -C core test`).
 * The build uses about 26 bytes per key temporarily (an array of hashes and the elimination state). Its elimination is
   also slower than the bare C core of the fuse filters (see the build table above).
 * Hashes are 64-bit, so two distinct keys with the same hash are indistinguishable (probability about `n**2 / 2**65`).
-* It was developed and measured on Linux x86-64. The Windows and macOS code paths (MSVC intrinsics, portable fallbacks)
-  are exercised only by the CI workflows in this repository, which have not been run yet. Free-threaded CPython wheels
-  are not built.
+* The timings here were measured on one Linux x86-64 machine. CI builds wheels and runs the tests on Linux (x86-64 and
+  ARM, manylinux and musllinux), macOS (Intel and Apple silicon) and Windows (MSVC, x64) for Python 3.10 and newer.
+  Nothing has been run on 32-bit or big-endian machines, and wheels for the free-threaded build of CPython are not built.
 * pyribbon is not on PyPI. Nothing has been published.
 
 ## Development

@@ -23,6 +23,8 @@ First development version (0.1.0, not published).
   `make calibrate` targets.
 - Benchmarks against `pyfusefilter` (Xor8, Xor16, Fuse8, Fuse16) and `rbloom` (`docs/benchmark.md`, `docs/benchmark.png`),
   plus small README figures drawn from the saved results (`docs/img/`, `make figures`).
+- A release workflow (`release.yml`): a pushed `v*` tag runs the tests, builds the sdist and the wheels, publishes to PyPI and creates
+  a GitHub release. Manual runs are dry runs.
 - CI workflows for lint, docstyle, mypy strict and stubtest, tests on Python 3.10 to 3.14, Windows and macOS builds,
   sanitizers, fuzzing, the sdist build and cibuildwheel. None of them publishes anything.
 

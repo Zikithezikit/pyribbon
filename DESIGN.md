@@ -339,9 +339,12 @@ supported (the keys are hashed as they stream into the temporary array; a `__len
 * Wheels via cibuildwheel 4.x: `skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"`; macOS `x86_64` and `arm64`;
   Windows `AMD64` only (ARM64 is untested); manylinux_2_28 and musllinux_1_2. Result per platform:
   a `cp310` wheel and a `cp311-abi3` wheel (R§12). Wheel tests run `pytest` against the installed wheel. Sanitizer
-  builds run as a separate CI job on a plain runner, outside cibuildwheel. Not yet verified: no wheel has been built
-  end to end and nothing has been built on macOS or Windows (R§12); the first CI run will show whether they work.
-* Nothing is published: no tag, no release, no PyPI upload, and no `release.yml` that fires on a tag until you ask.
+  builds run as a separate CI job on a plain runner, outside cibuildwheel. Verified in CI on 2026-11-12: the wheels build and pass the
+  test suite on Linux x86-64 and ARM (manylinux_2_28 and musllinux_1_2), macOS Intel and Apple silicon, and Windows x64.
+* Releases: `release.yml` runs the full tests, builds the sdist and the wheels, and publishes to PyPI (secret
+  `PYPI_API_TOKEN`) and to GitHub releases when a `v*` tag is pushed. Only the `publish` job can publish, and it runs only for a
+  push event on a `v*` tag; a manual run is a dry run, even from a tag. `tests/test_release_workflow.py` enforces that and
+  checks that no other workflow can publish. No tag has been pushed and nothing is on PyPI.
 
 ## 9. Repository layout and `make` targets
 
@@ -420,9 +423,10 @@ contents: read`.
 * XXH3 is vendored from a 7.5k-line header. Its stability promise and test vectors are taken on trust, and the header has not been audited.
 * Build memory: the banding array takes 16 bytes/slot (about 18 bytes/key at the w=64 overhead) plus 8 bytes/key for `H`,
   roughly 26 bytes/key, about 2.6 GB at `n = 1e8`, until sharding exists.
-* Never built or run here: Windows/MSVC, macOS, 32-bit, big-endian, free-threaded CPython, cibuildwheel itself (no container
-  runtime), and the libFuzzer build (no clang here; only the same harness with the built-in mutator ran). The CI workflows pass
-  `actionlint` but have not run.
+* Never built or run: 32-bit and big-endian machines, Windows ARM, and free-threaded CPython. The local machine has no clang, so
+  the libFuzzer build is exercised only in CI; the built-in mutator runs the same harness locally. Windows, macOS, the
+  manylinux/musllinux wheels and cibuildwheel itself were first exercised by the CI runs on 2026-11-12, which found and
+  fixed four problems (see the commit history).
 * An independent review of the C core and the extension found one high-severity extension bug (an overflowing length-hint
   preallocation) and several lower-severity items; all actionable ones are fixed and regression-tested (§6).
 * I read RocksDB-derived code through research notes; the implementation derives every step from [R]/[B] (R§9, R§10),
