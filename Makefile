@@ -3,7 +3,7 @@ BIN  := $(VENV)/bin
 PY   := $(BIN)/python
 
 .DEFAULT_GOAL := help
-.PHONY: help venv install-dev test pytest c-test c-asan c-portable c-fuzz ovh-sweep fpr-report calibrate lint format docstyle typecheck check bench build clean
+.PHONY: help venv install-dev test pytest c-test c-asan c-portable c-fuzz ovh-sweep fpr-report stats calibrate lint format docstyle typecheck check bench build clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -37,6 +37,10 @@ ovh-sweep:  ## Measure construction failure rate vs overhead with the real core
 
 fpr-report:  ## Measure the false-positive rate against 2^-r with millions of probes
 	$(MAKE) -C core fpr-report
+
+stats:  ## Run the statistical tests (slow) and write docs/measurements.{json,md}
+	PYRIBBON_STATS_OUT=docs/measurements.json $(BIN)/pytest -m slow -s tests/test_statistics.py
+	$(PY) benchmarks/render_measurements.py docs/measurements.json docs/measurements.md
 
 calibrate:  ## Regenerate the default-overhead table from the real core (slow)
 	$(MAKE) -C core calibrate
