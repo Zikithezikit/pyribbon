@@ -7,15 +7,8 @@ Ribbon filters for Python. A ribbon filter answers "is this key in the set?" for
 It needs fewer bits per key than a Bloom filter at the same false-positive rate. The core is C11, the Python layer is a
 thin extension, and there are no runtime dependencies.
 
-```python
-from pyribbon import RibbonFilter
-
-f = RibbonFilter(["alice", "bob", "carol"], fp_bits=12)  # false-positive rate of about 2**-12
-assert "alice" in f  # a member is always found
-assert "mallory" not in f  # a non-member is rejected, except with probability about 2**-12
-print(f.contains_many(["alice", "mallory"]))  # [True, False]
-print(len(f), f.size_in_bytes, round(f.bits_per_key))  # 3 256 683 (3 keys are padded to the minimum size, see "Limits")
-```
+Build a filter from your keys with `RibbonFilter(keys)` and ask it with `key in f`. [examples/01_quickstart.py](examples/01_quickstart.py)
+is the shortest complete program.
 
 Space, build time and lookup time against the number of keys, measured on one machine against `pyfusefilter` and `rbloom`
 (lower is better in every panel; the numbers behind the plots, and the caveats, are under [How it compares](#how-it-compares)):
@@ -33,6 +26,21 @@ pip install .
 It needs Python 3.10 or newer. The wheels workflow (`.github/workflows/wheels.yml`) uses cibuildwheel, but no wheel has
 been published.
 
+## Examples
+
+Start with `01_quickstart.py` and read them in order. Each script in [`examples/`](examples/) runs on its own
+(`python examples/01_quickstart.py`), and `make example` runs them all.
+
+| Script | What it shows |
+|---|---|
+| [01_quickstart.py](examples/01_quickstart.py) | Build a filter, ask it about keys, look at its size |
+| [02_key_types.py](examples/02_key_types.py) | Which keys are accepted and how `b"a"`, `"a"` and `97` stay different |
+| [03_choosing_fp_bits.py](examples/03_choosing_fp_bits.py) | Designed against measured false-positive rate, and the cost in bits |
+| [04_save_and_load.py](examples/04_save_and_load.py) | `to_bytes`, loading from a memory-mapped file, and a damaged file |
+| [05_batches_and_arrays.py](examples/05_batches_and_arrays.py) | `contains_many` with lists, `array.array` and numpy |
+| [06_errors.py](examples/06_errors.py) | Every error a caller can get, and what causes it |
+| [07_threads.py](examples/07_threads.py) | Querying one filter from several threads |
+
 ## Usage
 
 ### Keys
@@ -40,7 +48,7 @@ been published.
 A key can be `bytes`, `bytearray` or `memoryview` (hashed by content), `str` (as UTF-8) or `int` (any size; `numpy`
 integers work). `b"a"`, `"a"` and `97` are three different keys. Anything else, such as a `float`, `None` or a tuple,
 raises `TypeError`, because there is no implicit `str()`. Python's `hash()` is never used, so a saved filter can be loaded
-in any process on any platform. `DESIGN.md` (section 3.1) specifies the exact mapping.
+in any process on any platform. `DESIGN.md` (section 3.1) specifies the exact mapping. [examples/02_key_types.py](examples/02_key_types.py) tries each case.
 
 ### Choosing `fp_bits`
 
@@ -61,28 +69,16 @@ The measured false-positive rate matches the designed one. Each dot below is one
 
 ![Measured false-positive rate divided by the designed rate 2^-r for every test case: all dots lie on 1.0 within their 95% intervals](https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/docs/img/accuracy.png)
 
+[examples/03_choosing_fp_bits.py](examples/03_choosing_fp_bits.py) measures the rate and the size for a few values of `fp_bits` on
+your own machine.
+
 ### Saving and loading
 
 `to_bytes()` produces a versioned, little-endian format with a magic number and checksums. `from_buffer()` queries the
 bytes where they are, without copying them, so a memory-mapped file uses no memory beyond the pages you touch:
 
-```python
-import mmap
-import os
-import tempfile
-
-from pyribbon import RibbonFilter
-
-f = RibbonFilter(range(100_000), fp_bits=10)
-with tempfile.TemporaryDirectory() as folder:
-    path = os.path.join(folder, "ids.ribbon")
-    with open(path, "wb") as fh:
-        fh.write(f.to_bytes())
-    with open(path, "rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-        g = RibbonFilter.from_buffer(mm)  # validates the header and the checksum once
-        assert 12_345 in g
-        del g  # release the buffer before the map is closed
-```
+The whole round trip, including a memory-mapped file and a damaged one, is in
+[examples/04_save_and_load.py](examples/04_save_and_load.py).
 
 `from_buffer(buf, verify=False)` skips the payload checksum, which would read every byte, so a huge mapped file stays
 lazy. The header is always validated. The loader treats its input as untrusted: a truncated, corrupted or hostile buffer
@@ -94,15 +90,7 @@ only. It is not a MAC, so it does not protect against tampering. Do not modify a
 `contains_many(keys)` returns a `list[bool]`. A 1-D integer buffer (`array.array`, `numpy`) is hashed in C without the
 GIL, and gives exactly the same results as querying the same ints one at a time:
 
-```python
-import array
-
-from pyribbon import RibbonFilter
-
-ids = array.array("q", range(1_000_000))
-f = RibbonFilter(ids)
-assert f.contains_many(array.array("q", [5, 10**9])) == [True, False]
-```
+[examples/05_batches_and_arrays.py](examples/05_batches_and_arrays.py) shows both, with and without numpy.
 
 ### Errors
 
@@ -110,19 +98,14 @@ A build that finds no solvable system after `max_attempts` seeds raises `Constru
 filter. Bad serialized data raises `FormatError`. Both are subclasses of `RibbonError`. Invalid arguments raise
 `ValueError` or `TypeError`.
 
-```python
-from pyribbon import FormatError, RibbonFilter
-
-try:
-    RibbonFilter.from_buffer(b"definitely not a filter")
-except FormatError as error:
-    print(error)  # invalid pyribbon data: buffer too short
-```
+[examples/06_errors.py](examples/06_errors.py) triggers each of them.
 
 ### Threads
 
 A filter is immutable, so any number of threads can query the same filter at once. Builds and large batches release the
-GIL. `pickle` and `copy` work. Wheels for the free-threaded build of CPython are not built yet.
+GIL. `pickle` and `copy` work. Wheels for the free-threaded build of CPython are not built yet. [examples/07_threads.py](examples/07_threads.py) queries one
+filter from eight threads.
+
 
 ## How it compares
 

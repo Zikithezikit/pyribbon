@@ -3,7 +3,7 @@ BIN  := $(VENV)/bin
 PY   := $(BIN)/python
 
 .DEFAULT_GOAL := help
-.PHONY: help venv install-dev test pytest c-test c-asan c-portable c-fuzz ovh-sweep fpr-report stats figures calibrate lint format docstyle typecheck check bench build clean
+.PHONY: help venv install-dev test pytest example c-test c-asan c-portable c-fuzz ovh-sweep fpr-report stats figures calibrate lint format docstyle typecheck check bench build clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -19,6 +19,9 @@ test: c-test pytest  ## C unit tests, then the Python tests
 
 pytest:  ## Run the Python test suite (add ARGS="-m 'not slow'" to skip the statistical tests)
 	$(BIN)/pytest $(ARGS)
+
+example:  ## Run every script in examples/
+	@for f in examples/*.py; do echo "== $$f"; $(PY) $$f || exit 1; done
 
 c-test:  ## Build and run the C core unit tests (no Python needed)
 	$(MAKE) -C core test

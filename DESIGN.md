@@ -348,7 +348,7 @@ supported (the keys are hashed as they stream into the temporary array; a `__len
 ```
 core/{include,src,tests,tools,fuzz,vendor}   C library, C unit tests, calibration/report tools, loader fuzz harness; own Makefile
 src/pyribbon/{__init__.py,_ribbon.c,_ribbon.pyi,py.typed}
-tests/ (pytest + hypothesis + spec_reference.py)   benchmarks/ (bench.py, research/)   docs/ (generated results)
+tests/ (pytest + hypothesis + spec_reference.py)   examples/ (numbered scripts, run by a test)   benchmarks/ (bench.py, research/)   docs/ (generated results)
 Makefile pyproject.toml setup.py MANIFEST.in LICENSE README.md CHANGELOG.md RESEARCH.md DESIGN.md
 ```
 

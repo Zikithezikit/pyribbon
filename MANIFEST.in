@@ -8,5 +8,6 @@ graft core/tools
 graft core/fuzz
 include core/Makefile
 graft tests
+graft examples
 prune core/build
 global-exclude *.py[cod] __pycache__ *.so

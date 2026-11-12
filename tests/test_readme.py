@@ -3,8 +3,6 @@ benchmark table is an exact copy of the one in docs/benchmark.md."""
 
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import re
 import sys
@@ -18,21 +16,14 @@ README = ROOT / "README.md"
 pytestmark = pytest.mark.skipif(not README.exists(), reason="README.md is not shipped next to the installed tests")
 
 
-def python_blocks() -> list[str]:
-    return re.findall(r"```python\n(.*?)```", README.read_text(), flags=re.DOTALL)
-
-
-@pytest.mark.parametrize("index", range(len(python_blocks()) if README.exists() else 0))
-def test_readme_example_runs_and_prints_what_it_says(index: int) -> None:
-    code = python_blocks()[index]
-    expected = [
-        re.sub(r"\s+\(.*\)$", "", m.group(1))  # a trailing "(note)" is commentary, not output
-        for m in re.finditer(r"print\(.*\)\s+# (.*)$", code, flags=re.MULTILINE)
-    ]
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        exec(compile(code, f"README.md block {index}", "exec"), {"__name__": "__readme__"})
-    assert out.getvalue().splitlines() == expected
+def test_readme_links_every_example_and_only_real_ones() -> None:
+    """The examples live in examples/, not in the README: each script is listed there, and each link points at a file."""
+    text = README.read_text()
+    linked = set(re.findall(r"\]\((examples/[\w./-]+\.py)\)", text))
+    on_disk = {f"examples/{p.name}" for p in (ROOT / "examples").glob("*.py")}
+    assert on_disk, "examples/ has no scripts"
+    assert linked == on_disk, f"README and examples/ disagree: {sorted(linked ^ on_disk)}"
+    assert "```python" not in text, "put code in examples/ and link to it"
 
 
 def _update_readme():  # type: ignore[no-untyped-def]

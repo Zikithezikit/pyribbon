@@ -16,6 +16,8 @@ First development version (0.1.0, not published).
   loader treats its input as untrusted.
 - A C11 core (`core/`) that builds without Python. It has its own unit tests, portable fallbacks for the bit operations,
   ASan/UBSan runs and a fuzz harness for the loader.
+- Seven numbered example scripts in `examples/` (start with `01_quickstart.py`); `make example` runs them and a test checks
+  their output.
 - A pure-Python reference implementation of the spec (`tests/spec_reference.py`), used as the oracle in tests.
 - Property, differential-fuzz, statistical, leak and concurrency tests, plus the `make stats`, `make bench` and
   `make calibrate` targets.
