@@ -139,11 +139,15 @@ typedef enum {
   RB_OK = 0, RB_E_INVALID_ARG, RB_E_NOMEM, RB_E_CONSTRUCT /* all attempts failed */,
   RB_E_TOO_LARGE, RB_E_TRUNCATED, RB_E_MAGIC, RB_E_VERSION, RB_E_FORMAT, RB_E_CHECKSUM
 } rb_status;
+typedef enum { RB_KEY_BYTES = 0, RB_KEY_STR = 1, RB_KEY_BIGINT = 2 } rb_key_kind;
 typedef struct { uint32_t fp_bits; uint32_t max_attempts; double overhead; /* <0: auto */ uint64_t seed; } rb_params;
 typedef struct { uint32_t attempts; uint64_t num_rows; } rb_build_info;
 
-uint64_t  rb_hash_bytes(const void *p, size_t n, uint64_t seed, uint8_t tag);   /* §3.1 */
-uint64_t  rb_hash_i64(int64_t v, uint64_t seed);
+rb_params rb_params_default(void);
+const char *rb_strerror(rb_status status);
+uint64_t  rb_hash_bytes(const void *data, size_t len, uint64_t seed, rb_key_kind kind);   /* section 3.1 */
+uint64_t  rb_hash_i64(int64_t value, uint64_t seed);
+double    rb_default_overhead(uint64_t n);   /* the sizing table, section 2 */
 
 rb_status rb_build(const uint64_t *key_hashes, size_t n, const rb_params *p, rb_filter **out, rb_build_info *info);
 rb_status rb_from_buffer(const void *buf, size_t len, int verify_payload, rb_filter **out); /* zero copy: caller keeps buf alive */
@@ -218,7 +222,7 @@ file works on little- and big-endian hosts without a conversion pass. Nothing is
 
 **Recommendation: a thin hand-written CPython C extension, built with setuptools, limited API (abi3, floor 3.11) for
 3.11+ and the same source built non-limited for 3.10** (R§12). Why: the same per-call cost as the full API and
-the best of the three options measured (32-34 ns vs 41 Cython `def` vs 175-267 cffi; batch ~1.9 ns/key); zero runtime
+the best of the three options measured (a trivial call costs 32-34 ns vs 41 Cython `def` vs 175-267 cffi, R§12); zero runtime
 dependencies; build dependencies are setuptools and a C compiler; an sdist builds with only `cc`. Cython and cffi are not
 rejected for speed alone but because they add a build or runtime dependency without a measured gain, and cffi
 cannot define `__contains__` as a type slot. meson-python is rejected (needs a VCS checkout for sdist, breaks on 3.10
@@ -233,18 +237,28 @@ and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
 * **GIL.** Single-key `__contains__` never releases the GIL (the save/restore costs more than the ~30 ns of work, R§12).
   `build` hashes keys with the GIL held (it touches Python objects), then **releases the GIL for banding and back
   substitution** (pure C, can take seconds). `contains_many` hashes into a temporary array with the GIL held and
-  releases it for the probe loop when the batch is ≥ 1024 keys (threshold to be tuned by the benchmark). Between the
+  releases it for the probe loop when the batch is ≥ 1024 keys (an untuned threshold; a 4-thread test shows about 1.7x
+  the single-thread time, against about 4x with the GIL held). Between the
   macros the code touches no Python object, refcount, `PyErr_*` or `PyMem_*` allocator (R§12).
 * **Thread safety.** An immutable filter is safe to query from many threads at once: no field is written after
   construction, there is no lazy state, and the core has no globals. Concurrent builds are independent. `free` of the last
-  reference cannot race a running query, because a query holds a reference. I will state this in the docs and test it
-  with a multi-thread stress test.
+  reference cannot race a running query, because a query holds a reference. Stated in the docs and exercised by
+  `tests/test_concurrency.py` (8 threads on one shared filter; concurrent builds; GIL-release checks).
 * **Buffers.** `from_buffer` calls `PyObject_GetBuffer(PyBUF_SIMPLE)` once and holds the `Py_buffer` until
   deallocation. Accepted: any C-contiguous buffer (`bytes`, `mmap`, `memoryview`, `bytearray`). While a filter exists,
   Python blocks resizing a `bytearray` and closing an `mmap` (`BufferError`, R§12), but **in-place writes to a
   `bytearray` or a writable `mmap` are not blocked** and would silently change query answers (memory-safe, but
   false negatives are possible). The docs say "do not mutate the buffer"; a read-only source (`bytes`, `mmap.ACCESS_READ`) is the
   recommended path. I do not reject writable buffers, because the default `mmap` mode is writable.
+* **GC.** A filter made by `from_buffer` holds a reference to the buffer's owner, which could refer back to it, so the type is
+  GC-tracked (traverse + clear, like `memoryview`). `tp_clear` frees the core filter *before* releasing the buffer and leaves
+  the object in a released state in which every method raises `ValueError`. Found by the leak tests.
+* **Key arrays.** A 1-D C-contiguous buffer of integers (`array.array`, numpy) passed as `keys` is treated as an array of int
+  keys and hashed in C without the GIL, with exactly the hashes the same ints would get one by one (uint64 values >= 2^63 take
+  the bigint encoding). Non-contiguous, multi-dimensional, big-endian-format or float buffers fall back to plain iteration (and so to
+  its errors). `str`, `bytes`, `bytearray` and `memoryview` passed as `keys` raise `TypeError`: iterating one key's characters
+  or bytes is almost always a bug. Measured effect (one idle-ish core): `contains_many` over 1e6 ints 40 ns/key from a list,
+  32 ns/key from an `array('q')`; build 70 ns/key from a list, 72 from numpy (the C core alone: 56 ns/key at n = 1e6).
 * **Types.** Ship `py.typed` and `_ribbon.pyi` (stubs for the C module), checked with `mypy.stubtest` in CI so the stubs
   cannot drift from the compiled module.
 
