@@ -28,10 +28,17 @@ typedef struct {
 
 typedef struct {
   PyObject_HEAD
-  rb_filter *filter;
-  Py_buffer view; /* the exporter of the serialized bytes when created by from_buffer (zero copy) */
+  rb_filter *filter; /* NULL only after the garbage collector broke a reference cycle through the buffer owner */
+  Py_buffer view;    /* the exporter of the serialized bytes when created by from_buffer (zero copy) */
   int has_view;
 } FilterObject;
+
+/* The live core filter, or NULL with ValueError set (the object was cleared by the cycle collector). */
+static rb_filter *filter_of(PyObject *obj) {
+  rb_filter *f = ((FilterObject *)obj)->filter;
+  if (!f) PyErr_SetString(PyExc_ValueError, "operation on a RibbonFilter released by garbage collection");
+  return f;
+}
 
 /* New reference to the type's name as a str (tp_name is not visible in the limited API). */
 static PyObject *type_name_of(PyObject *obj) {
@@ -360,25 +367,46 @@ static PyObject *Filter_new(PyTypeObject *type, PyObject *args, PyObject *kwds) 
   return (PyObject *)self;
 }
 
-static void Filter_dealloc(PyObject *obj) {
+/* A filter created by from_buffer holds a reference to the buffer's owner, which can in principle refer back to the
+ * filter: so the type takes part in cyclic garbage collection, like memoryview does. */
+static int Filter_traverse(PyObject *obj, visitproc visit, void *arg) {
   FilterObject *self = (FilterObject *)obj;
+  Py_VISIT(Py_TYPE(obj));
+  if (self->has_view) Py_VISIT(self->view.obj);
+  return 0;
+}
+
+static int Filter_clear(PyObject *obj) {
+  FilterObject *self = (FilterObject *)obj;
+  rb_free(self->filter); /* the filter points into the buffer: free it before the buffer is released */
+  self->filter = NULL;
+  if (self->has_view) {
+    self->has_view = 0;
+    PyBuffer_Release(&self->view);
+  }
+  return 0;
+}
+
+static void Filter_dealloc(PyObject *obj) {
   PyTypeObject *tp = Py_TYPE(obj);
-  rb_free(self->filter);
-  if (self->has_view) PyBuffer_Release(&self->view);
+  PyObject_GC_UnTrack(obj);
+  (void)Filter_clear(obj);
   freefunc tp_free = (freefunc)PyType_GetSlot(tp, Py_tp_free);
   tp_free(obj);
   Py_DECREF(tp);
 }
 
 static int Filter_contains(PyObject *obj, PyObject *key) {
-  FilterObject *self = (FilterObject *)obj;
+  rb_filter *f = filter_of(obj);
   uint64_t h;
-  if (key_hash(key, rb_seed(self->filter), &h) < 0) return -1;
-  return rb_contains(self->filter, h);
+  if (!f || key_hash(key, rb_seed(f), &h) < 0) return -1;
+  return rb_contains(f, h);
 }
 
 static Py_ssize_t Filter_length(PyObject *obj) {
-  uint64_t n = rb_num_keys(((FilterObject *)obj)->filter);
+  rb_filter *f = filter_of(obj);
+  if (!f) return -1;
+  uint64_t n = rb_num_keys(f);
   if (n > (uint64_t)PY_SSIZE_T_MAX) {
     PyErr_SetString(PyExc_OverflowError, "key count does not fit in Py_ssize_t");
     return -1;
@@ -387,9 +415,10 @@ static Py_ssize_t Filter_length(PyObject *obj) {
 }
 
 static PyObject *Filter_contains_many(PyObject *obj, PyObject *keys) {
-  FilterObject *self = (FilterObject *)obj;
+  rb_filter *filter = filter_of(obj);
+  if (!filter) return NULL;
   HashVec hv = {NULL, 0, 0};
-  if (collect_hashes(keys, rb_seed(self->filter), &hv, "keys") < 0) {
+  if (collect_hashes(keys, rb_seed(filter), &hv, "keys") < 0) {
     free(hv.data);
     return NULL;
   }
@@ -401,10 +430,10 @@ static PyObject *Filter_contains_many(PyObject *obj, PyObject *keys) {
   }
   if (n >= BATCH_NOGIL_THRESHOLD) {
     Py_BEGIN_ALLOW_THREADS
-    rb_contains_many(self->filter, hv.data, n, flags);
+    rb_contains_many(filter, hv.data, n, flags);
     Py_END_ALLOW_THREADS
   } else {
-    rb_contains_many(self->filter, hv.data, n, flags);
+    rb_contains_many(filter, hv.data, n, flags);
   }
   free(hv.data);
   PyObject *list = PyList_New((Py_ssize_t)n);
@@ -416,11 +445,12 @@ static PyObject *Filter_contains_many(PyObject *obj, PyObject *keys) {
 }
 
 static PyObject *Filter_to_bytes(PyObject *obj, PyObject *Py_UNUSED(ignored)) {
-  FilterObject *self = (FilterObject *)obj;
-  size_t size = rb_serialized_size(self->filter);
+  rb_filter *f = filter_of(obj);
+  if (!f) return NULL;
+  size_t size = rb_serialized_size(f);
   PyObject *out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)size);
   if (!out) return NULL;
-  if (rb_serialize(self->filter, PyBytes_AsString(out), size) != RB_OK) {
+  if (rb_serialize(f, PyBytes_AsString(out), size) != RB_OK) {
     Py_DECREF(out);
     PyErr_SetString(PyExc_SystemError, "rb_serialize failed on a correctly sized buffer");
     return NULL;
@@ -470,22 +500,25 @@ static PyObject *Filter_reduce(PyObject *obj, PyObject *Py_UNUSED(ignored)) {
 }
 
 static PyObject *Filter_repr(PyObject *obj) {
-  FilterObject *self = (FilterObject *)obj;
+  rb_filter *f = ((FilterObject *)obj)->filter;
+  if (!f) return PyUnicode_FromString("RibbonFilter(<released>)");
   return PyUnicode_FromFormat("RibbonFilter(keys=%llu, fp_bits=%u, size_in_bytes=%zu)",
-                              (unsigned long long)rb_num_keys(self->filter), rb_fp_bits(self->filter),
-                              rb_serialized_size(self->filter));
+                              (unsigned long long)rb_num_keys(f), rb_fp_bits(f), rb_serialized_size(f));
 }
 
 static PyObject *Filter_get_size_in_bytes(PyObject *obj, void *Py_UNUSED(closure)) {
-  return PyLong_FromSize_t(rb_serialized_size(((FilterObject *)obj)->filter));
+  rb_filter *f = filter_of(obj);
+  return f ? PyLong_FromSize_t(rb_serialized_size(f)) : NULL;
 }
 
 static PyObject *Filter_get_fp_bits(PyObject *obj, void *Py_UNUSED(closure)) {
-  return PyLong_FromUnsignedLong(rb_fp_bits(((FilterObject *)obj)->filter));
+  rb_filter *f = filter_of(obj);
+  return f ? PyLong_FromUnsignedLong(rb_fp_bits(f)) : NULL;
 }
 
 static PyObject *Filter_get_bits_per_key(PyObject *obj, void *Py_UNUSED(closure)) {
-  const rb_filter *f = ((FilterObject *)obj)->filter;
+  rb_filter *f = filter_of(obj);
+  if (!f) return NULL;
   uint64_t n = rb_num_keys(f);
   return PyFloat_FromDouble(n ? 8.0 * (double)rb_serialized_size(f) / (double)n : 0.0);
 }
@@ -519,6 +552,8 @@ static PyType_Slot Filter_slots[] = {
              "false negative and gives a false positive with probability about 2**-fp_bits. Safe to query from many threads."},
     {Py_tp_new, (void *)Filter_new},
     {Py_tp_dealloc, (void *)Filter_dealloc},
+    {Py_tp_traverse, (void *)Filter_traverse},
+    {Py_tp_clear, (void *)Filter_clear},
     {Py_tp_repr, (void *)Filter_repr},
     {Py_tp_methods, Filter_methods},
     {Py_tp_getset, Filter_getset},
@@ -527,7 +562,7 @@ static PyType_Slot Filter_slots[] = {
     {0, NULL}};
 
 static PyType_Spec Filter_spec = {"pyribbon.RibbonFilter", sizeof(FilterObject), 0,
-                                  Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE, Filter_slots};
+                                  Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_HAVE_GC, Filter_slots};
 
 /* ------------------------------------------------------------------------------------------------- */
 /* module                                                                                            */

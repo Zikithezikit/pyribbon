@@ -62,8 +62,9 @@ smash, free-threaded wheels.
 Validation (`make ovh-sweep`, real library, an independent key range per trial; 4000 trials for n <= 1000, 1500 for
 3e3-1e4, 300 for 1e5, 60 for 1e6): per-attempt failure at the default overhead is 0.0% (n=100), 0.85% (300), 0.10% (1e3),
 1.8% (3e3), 2.1% (1e4), 3.3% (1e5), 3.3% (1e6); mean attempts <= 1.033; so the acceptance bound (failure <= 7%, mean attempts
-<= 1.1) holds at every size. Resulting size at r = 8: 8.70 bits/key at n = 1e3, 8.60 at 1e4, 8.79 at 1e5, 8.99 at 1e6 (tiny
-sets are padded to the 128-row minimum: 10.24 bits/key at n = 100). **Two measurement pitfalls found on the way, both fixed:**
+<= 1.1) holds at every size. Resulting size at r = 8 (payload only; the 64-byte header adds 512/n bits per key, so `bits_per_key` reads 9.22 at n = 1e3,
+8.65 at 1e4, 8.79 at 1e5, 8.99 at 1e6): 8.70 / 8.60 / 8.79 / 8.99 bits/key (tiny sets are padded to the 128-row minimum: 10.24
+bits/key payload, 15.4 with header at n = 100). **Two measurement pitfalls found on the way, both fixed:**
 (1) the first version mixed the seed into the key hash by XOR, so dense integer keys gave overlapping hash sets for nearby
 seeds (`seed=1` rebuilt almost the filter of `seed=0`); (2) trials that re-use the same keys share hash values and are
 correlated, which had inflated one failure-rate estimate to 12% against 4% for independent trials.
@@ -289,7 +290,8 @@ class FormatError(RibbonError, ValueError): ...  # bad/truncated/corrupt seriali
 ```
 
 Notes: there is no `add` or `remove` (the structure is static); `__contains__` on `bool` is an `int`; `len()` counts
-supplied keys because deduplicating would need a sort; `bits_per_key` therefore includes any duplicates in its
+supplied keys because deduplicating would need a sort; builds are deterministic and independent of the order of the keys (the set of
+pivots and the zero-free-variables solution are order-invariant; property-tested, including builds that needed retries); `bits_per_key` therefore includes any duplicates in its
 denominator. Single-pass iterables are supported (the keys are hashed as they stream into the temporary array;
 a `__len__` lets the array be preallocated). `from_buffer` copies nothing and raises `FormatError` (never crashes) on
 bad input. Errors for wrong key types are `TypeError`; for out-of-range arguments `ValueError`.
