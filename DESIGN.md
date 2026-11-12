@@ -1,0 +1,361 @@
+# DESIGN (v0.1 proposal, awaiting approval)
+
+Status: **proposal; no implementation code exists.** Written 2026-11-12. Evidence and citations live in
+RESEARCH.md. `R§n` points to a section of RESEARCH.md; a plain `§n` points inside this file. Anything marked **[you decide]** is public-facing or
+irreversible and needs your approval; everything else is a default I picked and will change on request.
+
+## 0. Phase 0 record
+
+* **Name.** `https://pypi.org/pypi/pyribbon/json` returned HTTP 404 on 2026-11-12, and a grep of the full PyPI simple
+  index (938,319 projects) for "ribbon" found 21 unrelated names, none `pyribbon`. The name is free **today**;
+  re-check at upload time (PyPI names can be taken at any moment). The unrelated GitHub project called pyribbon
+  (a Sonus/Ribbon SBC REST client) is not on PyPI under that name. **[you decide]**: keep `pyribbon`.
+* **Gap.** No Python ribbon-filter package or BuRR wrapper found on PyPI or GitHub. Ribbon implementations exist in
+  Rust (`pleat`, `ribbon-filter`), Go (`ribbonGo`), C++ (RocksDB, `fastfilter_cpp`, `lorenzhs/BuRR`) (R§10).
+* **Corrections to the brief.** (1) `pyxorfilter` exists but is **unusable on Python 3.13/3.14** (no wheel, broken
+  sdist, breaks with xxhash 4.x, `in` loops forever); its maintained successor is `pyfusefilter`, which I will
+  benchmark instead (R§12). (2) "A fastfilter_cpp fork with BuRR" is `lorenzhs/fastfilter_cpp`, which pulls the BuRR
+  code from the separate `lorenzhs/BuRR` repo. (3) "Balanced" ribbon is a real variant but exists only in the Ribbon
+  paper, as experimental, with details left to code (R§2).
+
+## 1. v0.1 scope
+
+**Variant: standard ribbon, width w = 64, integer fingerprint bits r = 1..32, interleaved column layout.**
+
+Why standard: FP = 2^-r *exactly* (the fingerprint is independent of the equations), which is what the requirement
+"measured FPR matches 2^-r" and "retry with a new seed on failure" both assume (R§2, R§5). Homogeneous ribbon never
+fails but gives FP = p + (1-p)·2^-r, can exceed 2^-r, and has undetectable FP variance on small sets (R§2). Standard
+ribbon is the simpler thing to *prove* correct with tests.
+
+Why w = 64: one machine word, shifts and parity are single instructions, and the authors advise 32 or 64 on 64-bit
+machines (R§3). **The cost, stated up front:** at w = 64 the overhead needed for a 5%-per-attempt failure rate grows
+with `log n` (R§5, R§9), so ~5% at 1e3 keys but ~12% at 1e6 and ~17.6% at 1e8, versus 4.8% (1e6) and 7.3% (1e8) for w = 128.
+At 1e6 keys that is roughly where binary-fuse filters already are (Fuse8 measured 9.51 bits/key at 1e5, R§12), so
+**v0.1 is expected to beat Xor and Bloom clearly, and to be only modestly smaller than Fuse at large n.** The
+benchmark will say so. Mitigation is on the roadmap (w = 128 or hard sharding) and the format already carries the
+width, so adding it later is not a format break. **[you decide]**: if you would rather have the large-n win in v0.1,
+w = 128 (two-word core) is the change to ask for.
+
+Deferred to the roadmap (§13): BuRR, Balanced, homogeneous, w = 128, sharding, SIMD, parallel build, fractional r,
+smash, free-threaded wheels, pickle support.
+
+## 2. Parameters
+
+| Parameter | Default | Range | Justification |
+|---|---|---|---|
+| width `w` | 64 | fixed (stored in header as `width_log2`) | §1 |
+| `fp_bits` r | 8 | 1..32 | FP ≈ 2^-r. 8 matches Xor8/Fuse8 (0.39%) for like-for-like benchmarks; ≤ 32 keeps the per-slot result in a `uint32_t` |
+| rows `m` | `roundup64(ceil(n·(1+ε(n))))`, min 128 | multiple of 64 | the interleaved layout needs `m % 64 == 0`; `m ≥ 2w` so that the number of start positions `m-w+1 > w` and every window has a following block (R§9) |
+| overhead ε(n) | `max(0.05, 0.07 + 0.0083·(log2 n − 14))` | `overhead=` override | my fit to the w=64, 95%-per-attempt column of R§9 (4.9, 6.6, 9.3, 12.0, 14.8, 17.6% at n = 1e3..1e8) and to [R Table 1] (R§5). **A fit to other people's numbers**: Phase 2 re-measures it. Acceptance: measured per-attempt failure ≤ 10% and mean attempts ≤ 1.15 for n in {1e2..1e7} |
+| `max_attempts` | 32 | 1..255 | with 5% per-attempt failure, 32 attempts is far below any realistic failure rate; RocksDB uses 256 with a Bloom fallback (R§9); we raise instead |
+| retry policy | new seed every attempt; from the 3rd attempt also grow `m` by `(w+1)/w` | | reseeding is the primary mechanism; growth is the paper's alternative [R p9] and guarantees termination even if the fit is wrong for some `n` (R§5) |
+| `seed` | 0 | 0..2^64-1 | user domain separation; stored in the header |
+
+Predicted size (**prediction from the paper tables, not a measurement**): r = 8 gives `8·(1+ε)` bits/key, i.e. ≈ 8.4 at
+1e3, 8.7 at 1e5, 9.0 at 1e6, before rounding `m` up to 64. Tiny sets are padded to the 128-row minimum
+(128 rows × 8 bits = 128 bytes for r = 8) and the README will say so.
+
+**On failure** the build raises `ConstructionError` after `max_attempts`; a filter that did not pass banding is
+never returned. `n = 0` produces a valid empty filter (header only, `num_rows = 0`, every query false).
+
+## 3. Hashing (key → bytes → 64 bits → ribbon coordinates)
+
+Python's built-in `hash()` is **never** used (randomized per process; breaks saved filters).
+
+### 3.1 Key to master hash `H` (hash id 1, frozen by spec; any change bumps `hash_id`)
+
+| Key type | Rule |
+|---|---|
+| `bytes`, `bytearray`, `memoryview` (C-contiguous) | payload bytes `P`; `h0 = XXH3_64bits(P)` (seed 0, default secret). A `memoryview` is treated as raw bytes regardless of its format. |
+| `str` | UTF-8 bytes (strict; a lone surrogate raises `UnicodeEncodeError`); `h0 = XXH3_64bits(P) ^ TAG_STR` |
+| `int` (or anything with `__index__`) in `[-2^63, 2^63)` | `h0 = (uint64_t)value ^ TAG_INT` (two's complement of the numeric value; no byte order involved) |
+| any other `int` | bytes of the minimal little-endian two's-complement encoding; `h0 = XXH3_64bits(P) ^ TAG_BIGINT` |
+| anything else (`float`, `None`, tuples, ...) | `TypeError`. No implicit `str()`: `51` and `"51"` are different keys and floats are not keys |
+
+`TAG_STR = 0x6a09e667f3bcc908`, `TAG_INT = 0xbb67ae8584caa73b`, `TAG_BIGINT = 0x3c6ef372fe94f82b` (SHA-512 initial
+values, chosen as nothing-up-my-sleeve), and the bytes tag is 0. So `b"a"`, `"a"` and `97` are distinct keys. Then
+`H = mix64((h0 ^ seed) + GAMMA)`.
+
+`mix64` is the SplitMix64 finalizer (Vigna; public domain) and `GAMMA = 0x9e3779b97f4a7c15`:
+`z = (z ^ z>>30)·0xbf58476d1ce4e5b9; z = (z ^ z>>27)·0x94d049bb133111eb; return z ^ z>>31`.
+
+* XXH3-64 is vendored (`xxhash.h`, BSD-2-Clause, notice shipped in sdist and wheels) with
+  `XXH_FORCE_MEMORY_ACCESS=0` (the default mode let GCC miscompile in BuRR's experience, R§10), scalar mode, fixed seed.
+  Why XXH3: the only candidate with a written output-stability promise, a spec, in-repo test vectors, and
+  byte-order-independent output (R§11). Fallback if you object to a 5k-line vendored header: SipHash-2-4 (CC0, 185
+  lines, ~5x slower on short keys per third-party numbers).
+* The int path is defined on the numeric value and `mix64` is a bijection, so distinct int64 keys never collide in `H`.
+* Distinct bytes/str keys collide in `H` with probability ≈ n²/2^65 (0.027 expected colliding pairs at n = 1e9). A
+  collision, like a duplicate key, yields identical equations; standard ribbon accepts these as redundant (R§4), so it
+  costs nothing but one possible false positive.
+
+### 3.2 `H` to ribbon coordinates (independent 64-bit words, own derivation)
+
+RocksDB-style designs stretch one 64-bit hash into the start, the coefficient row and the fingerprint with a
+multiplication, and for w = 128 only 64 bits of entropy back a 128-bit row (R§9). A bare multiply has no avalanche
+(measured: max deviation 0.5, R§11). We use independent words instead:
+
+```
+salt_a = mix64((a + 1) * GAMMA)            # a = attempt index, stored in the header
+S      = H ^ salt_a
+z0 = mix64(S + 1*GAMMA);  z1 = mix64(S + 2*GAMMA);  z2 = mix64(S + 3*GAMMA)
+start  = mulhi64(z0, m - 63)               # floor(z0 * (m-w+1) / 2^64), in [0, m-64]
+coeff  = z1 | 1                            # bit 0 forced to 1 (the row at `start`), [R p3]
+fp     = z2 >> (64 - r)                    # top r bits
+```
+
+The seed is mixed *after* `H` is already a full-avalanche value, so retries are not correlated the way "add the seed
+to the key before hashing" is (R§11). XXH3's own seed argument is not used (weak in third-party SMHasher3 runs, R§11).
+The builder hashes each key once into a `uint64_t H[n]` array (8 bytes/key of temporary memory) and every retry
+recomputes only the cheap derivation. Clean-room note: step 3.2 is my construction from the papers' requirements
+(R§6: fastrange on high bits, forced low coefficient bit, independent fingerprint); I use none of RocksDB's constants.
+
+## 4. C core
+
+C11, no dependencies besides the vendored `xxhash.h`, no global state, no atomics, no `malloc` inside queries,
+no VLAs. Layout: `core/include/ribbon.h`, `core/src/*.c`, `core/tests/*.c`, `core/fuzz/`, `core/vendor/`. Builds and
+tests with `make -C core test` and no Python.
+
+```c
+typedef struct rb_filter rb_filter;                 /* opaque */
+typedef enum {
+  RB_OK = 0, RB_E_INVALID_ARG, RB_E_NOMEM, RB_E_CONSTRUCT /* all attempts failed */,
+  RB_E_TOO_LARGE, RB_E_TRUNCATED, RB_E_MAGIC, RB_E_VERSION, RB_E_FORMAT, RB_E_CHECKSUM
+} rb_status;
+typedef struct { uint32_t fp_bits; uint32_t max_attempts; double overhead; /* <0: auto */ uint64_t seed; } rb_params;
+typedef struct { uint32_t attempts; uint64_t num_rows; } rb_build_info;
+
+uint64_t  rb_hash_bytes(const void *p, size_t n, uint64_t seed, uint8_t tag);   /* §3.1 */
+uint64_t  rb_hash_i64(int64_t v, uint64_t seed);
+
+rb_status rb_build(const uint64_t *key_hashes, size_t n, const rb_params *p, rb_filter **out, rb_build_info *info);
+rb_status rb_from_buffer(const void *buf, size_t len, int verify_payload, rb_filter **out); /* zero copy: caller keeps buf alive */
+void      rb_free(rb_filter *f);
+int       rb_contains(const rb_filter *f, uint64_t key_hash);
+void      rb_contains_many(const rb_filter *f, const uint64_t *hashes, size_t n, uint8_t *out);
+size_t    rb_serialized_size(const rb_filter *f);
+rb_status rb_serialize(const rb_filter *f, void *dst, size_t cap);
+/* accessors: rb_num_keys, rb_num_rows, rb_fp_bits, rb_seed */
+```
+
+* The core takes **key hashes**, not keys: hashing is a separate step so the Python layer can hash Python objects and
+  call the core on a `uint64_t` array.
+* `rb_filter` copies every header field into the struct at load time and **never re-reads the header from the
+  buffer**. Only payload words are read, at offsets computed from the validated struct; so a buffer mutated after
+  loading can give wrong answers but cannot cause an out-of-bounds read (no time-of-check/time-of-use hole).
+* **Build.** Arrays `coeff[m]` (`uint64_t`) and `res[m]` (`uint32_t`), 12 bytes/slot, empty slot = `coeff == 0`.
+  Per key: `i = start; c = coeff; b = fp`; loop { if slot `i` empty, store, done; `c ^= coeff[i]; b ^= res[i]`; if
+  `c == 0`: redundant if `b == 0`, else failure; `j = ctz(c); i += j; c >>= j` } (R§4). `c` always has bit 0 set before
+  the XOR and `c != 0` before `ctz`, so `1 ≤ j ≤ 63` and no shift reaches the type width. No pre-sort (R§4).
+  Back-substitution runs `i = m-1 .. 0`, keeps one 64-bit running word per column, and writes the interleaved layout
+  directly, one flushed block of `r` words per 64 rows (R§4).
+* **Query.** `s = start`, `blk = s >> 6`, `off = s & 63`; for each column `j < r`: the result bit is
+  `parity(W[blk][j] & (c << off)) ^ parity(W[blk+1][j] & (c >> (64 - off)))` (coefficient bit `k` selects row `s+k`; the
+  second term covers the bits that spill into the next block), with the second term **skipped when `off == 0`** (a shift by 64 is undefined behaviour). Early exit at the first mismatching
+  column. The last start is `m-64`, i.e. `off == 0` on the last block, so `blk+1` always exists when `off > 0`: **no
+  read beyond the buffer** (R§9).
+* **Portable bit ops** in one internal header: `ctz64`, `parity64`, `mulhi64`, `load_le64`/`store_le64`. Selection by
+  `#if`: GCC/Clang builtins (`__builtin_ctzll`, `__builtin_parityll`, `unsigned __int128`); MSVC (`_BitScanForward64`
+  on x64/ARM64, `_umul128` on x64, `__umulh` on ARM64; no `__popcnt64`, since parity folds with XORs and needs no
+  POPCNT); and pure-C fallbacks (de Bruijn `ctz`, XOR-fold parity, 32x32 split multiply). The fallbacks are compiled
+  and tested on Linux by forcing `-DRB_PORTABLE=1`. All integers are `uint64_t`/`uint32_t`, never `long` (32-bit on
+  Win64). `load_le64` is `memcpy` plus a byte swap on big-endian hosts, so no unaligned or endianness assumption.
+* **Warnings:** `-std=c11 -Wall -Wextra -Wconversion -Wshadow -Wcast-align -Werror`. Overflow in `n·(1+ε)`, `m·r/8`,
+  and `m/64·r·8` is checked (`RB_E_TOO_LARGE`); `RB_MAX_KEYS` keeps slot indices in `size_t` safely.
+
+## 5. Serialization (format v1, little-endian, all fields explicit)
+
+| Offset | Size | Field | Notes |
+|---:|---:|---|---|
+| 0 | 8 | magic | `"PYRIBBON"` |
+| 8 | 2 | `version` | 1; a reader rejects other versions (`RB_E_VERSION`) |
+| 10 | 2 | `header_size` | 64 |
+| 12 | 1 | `width_log2` | 6 |
+| 13 | 1 | `fp_bits` | 1..32 |
+| 14 | 1 | `hash_id` | 1 (§3) |
+| 15 | 1 | `flags` | 0; reserved bits must be zero |
+| 16 | 8 | `num_keys` | informational only (inputs counted, duplicates included); never used for addressing |
+| 24 | 8 | `num_rows` | 0, or a multiple of 64 and ≥ 128 |
+| 32 | 8 | `seed` | user seed |
+| 40 | 4 | `attempt` | seed index that succeeded |
+| 44 | 4 | reserved | 0 |
+| 48 | 8 | `payload_xxh3` | XXH3-64 of the payload |
+| 56 | 8 | `header_xxh3` | XXH3-64 of bytes 0..55 |
+| 64 | `num_rows/64·r·8` | payload | for block `k`, `r` words; word `j` holds column `j` for rows `64k..64k+63`, row `64k+i` at bit `i` |
+
+Loader rules (**input is untrusted**): (1) `len ≥ 64`; (2) magic, version, `header_size`, `width_log2`, `fp_bits`
+range, `hash_id`, `flags`, reserved all exact; (3) `header_xxh3` matches; (4) `num_rows` is 0 or a multiple of 64
+and ≥ 128, and `num_rows == 0` implies an empty payload; (5) `payload_len = num_rows/64·r·8` computed with explicit
+overflow checks, and **`len == 64 + payload_len` exactly** (slice a memoryview to embed a filter in a larger buffer);
+(6) if `verify_payload`, `payload_xxh3` matches (reads every byte once). `from_buffer(verify=False)` skips only
+rule 6, which keeps an mmapped filter lazy; rules 1-5 are O(1) and always run, so even the unverified path cannot
+read out of bounds. Payload corruption under `verify=False` can only change query answers. The checksum detects
+accidents, not tampering (it is not a MAC); the README will say that.
+
+Zero copy: a loaded filter keeps a pointer into the caller's buffer; the payload is read with `load_le64`, so the same
+file works on little- and big-endian hosts without a conversion pass. Nothing is allocated per query.
+
+## 6. Python binding
+
+**Recommendation: a thin hand-written CPython C extension, built with setuptools, limited API (abi3, floor 3.11) for
+3.11+ and the same source built non-limited for 3.10** (R§12). Why: the same per-call cost as the full API and
+the best of the three options measured (32-34 ns vs 41 Cython `def` vs 175-267 cffi; batch ~1.9 ns/key); zero runtime
+dependencies; build dependencies are setuptools and a C compiler; an sdist builds with only `cc`. Cython and cffi are not
+rejected for speed alone but because they add a build or runtime dependency without a measured gain, and cffi
+cannot define `__contains__` as a type slot. meson-python is rejected (needs a VCS checkout for sdist, breaks on 3.10
+and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
+
+* **Python 3.10.** `Py_buffer` entered the stable ABI in 3.11, so 3.10 gets its own non-limited wheel from the same
+  source (about 10 lines of conditional logic in `setup.py`). 3.10 reached end of life on 2026-10-01; I keep it because the
+  brief says 3.10+, and dropping it later removes that wheel and the conditional. **[you decide]**: keep or drop 3.10.
+* **Free-threaded** (3.14t) has no abi3 and I will not declare `Py_MOD_GIL_NOT_USED` before testing it: v0.1 skips
+  `*t-*` wheels, so a free-threaded interpreter builds from the sdist and re-enables the GIL on import. Roadmap item.
+* **GIL.** Single-key `__contains__` never releases the GIL (the save/restore costs more than the ~30 ns of work, R§12).
+  `build` hashes keys with the GIL held (it touches Python objects), then **releases the GIL for banding and back
+  substitution** (pure C, can take seconds). `contains_many` hashes into a temporary array with the GIL held and
+  releases it for the probe loop when the batch is ≥ 1024 keys (threshold to be tuned by the benchmark). Between the
+  macros the code touches no Python object, refcount, `PyErr_*` or `PyMem_*` allocator (R§12).
+* **Thread safety.** An immutable filter is safe to query from many threads at once: no field is written after
+  construction, there is no lazy state, and the core has no globals. Concurrent builds are independent. `free` of the last
+  reference cannot race a running query, because a query holds a reference. I will state this in the docs and test it
+  with a multi-thread stress test.
+* **Buffers.** `from_buffer` calls `PyObject_GetBuffer(PyBUF_SIMPLE)` once and holds the `Py_buffer` until
+  deallocation. Accepted: any C-contiguous buffer (`bytes`, `mmap`, `memoryview`, `bytearray`). While a filter exists,
+  Python blocks resizing a `bytearray` and closing an `mmap` (`BufferError`, R§12), but **in-place writes to a
+  `bytearray` or a writable `mmap` are not blocked** and would silently change query answers (memory-safe, but
+  false negatives are possible). The docs say "do not mutate the buffer"; a read-only source (`bytes`, `mmap.ACCESS_READ`) is the
+  recommended path. I do not reject writable buffers, because the default `mmap` mode is writable.
+* **Types.** Ship `py.typed` and `_ribbon.pyi` (stubs for the C module), checked with `mypy.stubtest` in CI so the stubs
+  cannot drift from the compiled module.
+
+## 7. Python API sketch (immutable filter) **[you decide: public API and names]**
+
+```python
+class RibbonFilter:
+    def __init__(self, keys: Iterable[Key], *, fp_bits: int = 8, seed: int = 0,
+                 overhead: float | None = None, max_attempts: int = 32) -> None: ...
+    def __contains__(self, key: Key) -> bool: ...
+    def contains_many(self, keys: Iterable[Key]) -> list[bool]: ...
+    def __len__(self) -> int: ...              # number of keys supplied; duplicates are counted
+    def to_bytes(self) -> bytes: ...
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, *, verify: bool = True) -> RibbonFilter: ...  # zero copy
+    @property
+    def size_in_bytes(self) -> int: ...        # len(to_bytes()), header included
+    @property
+    def bits_per_key(self) -> float: ...       # 8 * size_in_bytes / len(self); 0.0 for an empty filter
+    @property
+    def fp_bits(self) -> int: ...
+
+Key = bytes | bytearray | memoryview | str | int       # §3.1
+class RibbonError(Exception): ...
+class ConstructionError(RibbonError): ...      # all attempts failed
+class FormatError(RibbonError, ValueError): ...  # bad/truncated/corrupt serialized data
+```
+
+Notes: there is no `add` or `remove` (the structure is static); `__contains__` on `bool` is an `int`; `len()` counts
+supplied keys because deduplicating would need a sort; `bits_per_key` therefore includes any duplicates in its
+denominator. Single-pass iterables are supported (the keys are hashed as they stream into the temporary array;
+a `__len__` lets the array be preallocated). `from_buffer` copies nothing and raises `FormatError` (never crashes) on
+bad input. Errors for wrong key types are `TypeError`; for out-of-range arguments `ValueError`.
+
+## 8. Packaging
+
+* Python ≥ 3.10; MIT licence (`license-files = ["LICENSE", "LICENSES/xxhash.txt"]`) **[you decide]**; `src/pyribbon/`
+  layout and `[tool.ruff]`/`[tool.mypy]` blocks matching your other repos; `dependencies = []`.
+* Build backend setuptools ≥ 77; `MANIFEST.in` puts `core/` (including the Makefile and vendored header) in the sdist,
+  so `pip install` from the sdist needs only a C compiler.
+* **Wheels via cibuildwheel 4.x:** `skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"`; macOS `x86_64` and `arm64`;
+  Windows `AMD64` (and `ARM64` if the MSVC fallback tests pass); manylinux_2_28 and musllinux_1_2. Result per platform:
+  a `cp310` wheel and a `cp311-abi3` wheel (R§12). Wheel tests run `pytest` against the installed wheel. Sanitizer
+  builds are a **separate CI job** on a plain runner, not inside cibuildwheel. **Not yet verified:** no wheel has been built
+  end to end and nothing has been built on macOS or Windows (R§12); the first CI run is where that gets proven.
+* **Nothing is published.** No tag, no release, no PyPI upload, no `release.yml` that fires on a tag until you ask.
+
+## 9. Repository layout and `make` targets
+
+```
+core/{include,src,tests,fuzz,vendor}   C library + C unit tests + libFuzzer harness; own Makefile
+src/pyribbon/{__init__.py,_ribbon.c,_ribbon.pyi,py.typed}
+tests/ (pytest + hypothesis)   benchmarks/   docs/   examples/
+Makefile pyproject.toml setup.py MANIFEST.in LICENSE README.md CHANGELOG.md RESEARCH.md DESIGN.md
+```
+
+`make`: `venv` · `install-dev` · `test` (C unit + pytest) · `lint` (ruff check + format check) · `docstyle` · `typecheck`
+(mypy strict + stubtest) · `check` (lint, docstyle, typecheck, test) · `c-test` · `c-asan` · `c-fuzz` · `bench` (writes
+`docs/benchmark.png` and a table) · `build` (sdist, wheel, `twine check`) · `clean`. Docstring checks use ruff's `D` rules
+with `convention = "google"` (the same rules as your `pydocstyle --convention=google`, one tool fewer).
+
+## 10. Testing and evidence plan (maps to your requirements)
+
+| Requirement | How |
+|---|---|
+| No false negatives | Hypothesis for n from 0 to a few thousand (boundaries 0, 1, 63, 64, 65, 127, 128, 129 forced), all key types, `fp_bits` 1..32, seeds, duplicates; fixed parametrized tests at n = 1e5 and 1e6; C tests with fixed seeds; same keys through `contains` and `contains_many` |
+| Measured FPR ≈ 2^-r | for r ∈ {1,4,8,12,16}: ≥ 1e8 disjoint negative probes for r ≥ 8 (≥ 1e7 for r < 8), assert the count lies within 5σ of the binomial mean; test structured keys (sequential ints, short strings, bit patterns) as well as random; **report every number** |
+| Construction behavior | measure failure rate vs `overhead` for n ∈ {1e2..1e7} (thousands of trials at small n), fit and *replace* ε(n) if §2's formula misses its acceptance bound; failure raises `ConstructionError` (forced by `overhead=0.0, max_attempts=1`); duplicates and the empty set |
+| Hash and derivation | XXH3 outputs checked against the `xxhash` PyPI package as a test oracle (dev dependency only); known-answer vectors for `H` and `(start, coeff, fp)` committed as the format spec; avalanche test on the derivation words |
+| Serialization | round-trip; every truncation length; single-bit flips over the header (must be rejected, by rules 1-5 or the checksum); payload flips with `verify=True` (rejected) and `verify=False` (still memory-safe); hand-crafted hostile headers (huge `num_rows`, overflowing sizes); libFuzzer on `rb_from_buffer` + `rb_contains` under ASan/UBSan; the same corpus run under pytest |
+| Sanitizers, warnings | ASan/UBSan for the C tests and the extension in a separate CI job; `-Werror` set above; forced `RB_PORTABLE=1` build |
+| Memory | build/free and load/free in a loop, assert RSS growth under a threshold; ASan leak check on the C tests |
+| Concurrency | threads querying one filter (`contains` and `contains_many`), results compared to a single-thread run; threads building different filters; GIL-release timing check |
+
+## 11. Benchmarks (`make bench` reproduces everything)
+
+* **Compare against** `pyfusefilter` Xor8, Xor16, Fuse8, Fuse16 (in place of the unusable `pyxorfilter`, R§12) and
+  **`rbloom`** as the Bloom baseline: maintained, native Rust, MIT, abi3 wheels on 3.10-3.14, a settable FPR and a readable
+  size. A pure-Python Bloom would be a straw man (1.5-13 µs/probe measured). `fastbloom-rs` is an optional second Bloom
+  because it alone has a batch query.
+* **Same keys, same measured FPR:** each filter is sized for the same target, then its FPR is *measured* with the same
+  negative probes and bits/key is taken at the measured FPR (and reported with it, since fingerprint widths are
+  discrete: 8 vs 16 bits, and Bloom is continuous).
+* **Metrics:** bits/key at matched measured FPR; build time; single-query latency; batch throughput; n ∈ {1e3, 1e4, 1e5,
+  1e6, 1e7}.
+* **Method:** print CPU, OS, Python, compiler and flags; pin the process to a core; report median and spread over
+  ≥ 7 runs; keys pre-generated, so key creation is outside the timed region.
+* **Fairness caveats written into the output:** `pyfusefilter` hashes keys in Python (`str()` + xxhash) per call and
+  has no batch query, so its latency includes that cost (reported both as shipped and, where possible, with the
+  per-key Python hashing separated); `rbloom` needs an explicit `hash_func` (ints hash to themselves, `bytes` are
+  salted per process); the box runs a `powersave` governor, so absolute numbers are comparable between libraries within
+  one run but not across machines.
+* **Where I expect to lose** (to be confirmed or refuted by the data): build time against fuse and Bloom, and
+  space against Fuse at n ≥ 1e6 (§1). The README's comparison table will be generated from the benchmark output.
+
+## 12. CI quality gates
+
+Lint (ruff), strict mypy plus stubtest on the typed surface, Google-style docstring checks, pytest on 3.10 to 3.14,
+a sanitizer job (ASan + UBSan, C and extension), a C-warnings-as-errors job (`-Werror`, forced portable fallback), a
+`libFuzzer` smoke job (time-boxed) over the loader, an sdist-builds-with-plain-cc job, a cibuildwheel job (build and
+test, no upload), and a benchmark smoke run. Existing conventions kept: actions/checkout and setup-python, `permissions:
+contents: read`.
+
+## 13. Roadmap (not v0.1)
+
+1. **w = 128** (two-word core) and/or **hard sharding**, to flatten the overhead growth at large n (§1), with per-shard
+   retry and bounded temporary memory. First roadmap item because it is the main reason to prefer ribbon over fuse at scale.
+2. Homogeneous variant (no failure, FP caveats, R§2); fractional `fp_bits` (floor/ceil columns); smash for small `m`.
+3. **BuRR** (0.06-1.4% overhead, but bucket sort, rollback, per-bucket thresholds and 4-layer recursion) and Balanced.
+4. SIMD queries (AVX512 POPCNT / 8-bit interleaving), prefetch pipeline for batches, parallel build (bump `w` positions per
+   block to cut the system into independent blocks, R§7).
+5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor; pickle support; `bytearray`-safe loading.
+6. Cache effect of sorted vs random insertion for standard ribbon (not measured in the papers, R§4).
+
+## 14. Risks and open questions
+
+* The ε(n) fit rests on RocksDB's simulation (extrapolated beyond 2^17 slots) and [R Table 1]; v0.1 depends on Phase 2
+  confirming it. The retry-with-growth rule bounds the damage but not the speed.
+* XXH3 is vendored from a 5.2k-line header; I trust its stability promise and test vectors but have not audited it.
+* Build memory: the banding arrays take 12 bytes/slot (about 14 bytes/key at the w=64 overhead) plus 8 bytes/key for `H`,
+  roughly 22 bytes/key, about 2.2 GB at `n = 1e8`, until sharding exists.
+* Windows/macOS builds, cibuildwheel and the MSVC fallbacks are unverified (R§12).
+* I read RocksDB-derived code through research notes; the implementation derives every step from [R]/[B] (R§9, R§10),
+  uses no RocksDB constants and no pleat/ribbonGo test vectors, and cites its sources in code comments.
+* Patents on ribbon filters were not searched (R§9).
+
+## 15. Decisions for you
+
+1. Keep the name `pyribbon` (free on PyPI today; re-check before upload).
+2. Licence MIT (+ the BSD-2 xxHash notice for the vendored hash).
+3. Public API and names in §7 (`RibbonFilter`, `contains_many`, `from_buffer(verify=)`, the three exception classes).
+4. Width: w = 64 in v0.1 (as proposed) or w = 128 now (§1).
+5. Keep Python 3.10 (extra wheel) or drop it (§6).
+6. Benchmark `pyfusefilter` instead of `pyxorfilter` (§0, §11).
