@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import array
 import copy
 import importlib.metadata
 import mmap
@@ -305,3 +306,77 @@ def test_module_surface() -> None:
     ]
     assert RibbonFilter.__module__ == "pyribbon"
     assert FormatError.__module__ == "pyribbon" and ConstructionError.__module__ == "pyribbon"
+
+
+_ARRAY_VALUES = {
+    "b": [-128, -1, 0, 1, 127],
+    "B": [0, 1, 127, 128, 255],
+    "h": [-(2**15), -1, 0, 1, 2**15 - 1],
+    "H": [0, 1, 2**15, 2**16 - 1],
+    "i": [-(2**31), -1, 0, 1, 2**31 - 1, 123456],
+    "I": [0, 1, 2**31, 2**32 - 1],
+    "l": [-(2**31), -1, 0, 1, 2**31 - 1],
+    "L": [0, 1, 2**31, 2**32 - 1],
+    "q": [-(2**63), -1, 0, 1, 2**63 - 1, 10**12, -(10**12)],
+    "Q": [0, 1, 2**63 - 1, 2**63, 2**64 - 1, 2**64 - 2, 10**18],
+}
+
+
+@pytest.mark.parametrize("code", sorted(_ARRAY_VALUES))
+def test_integer_buffers_hash_like_the_same_ints(code: str) -> None:
+    values = _ARRAY_VALUES[code] * 40  # repeats are fine (duplicates), and the array is long enough for chunking
+    arr = array.array(code, values)
+    as_list = list(arr)
+    assert RibbonFilter(arr, fp_bits=16, seed=7).to_bytes() == RibbonFilter(as_list, fp_bits=16, seed=7).to_bytes()
+    f = RibbonFilter(as_list, fp_bits=6)
+    other = array.array(code, _ARRAY_VALUES[code])
+    probes = array.array(code, [v for v in range(-300, 300) if _fits(code, v)])
+    assert f.contains_many(other) == f.contains_many(list(other)) == [True] * len(other)
+    assert f.contains_many(probes) == f.contains_many(list(probes))
+    assert all(v in f for v in as_list)
+
+
+def _fits(code: str, value: int) -> bool:
+    try:
+        array.array(code, [value])
+    except OverflowError:
+        return False
+    return True
+
+
+def test_integer_buffer_edge_cases() -> None:
+    assert len(RibbonFilter(array.array("q"))) == 0
+    assert RibbonFilter([1, 2, 3]).contains_many(array.array("q")) == []
+    big = array.array("q", range(50_000))
+    f = RibbonFilter(big)
+    assert len(f) == 50_000 and all(f.contains_many(big))
+    with pytest.raises(TypeError, match="unsupported key type"):
+        RibbonFilter(array.array("d", [1.5, 2.5]))
+    with pytest.raises(TypeError, match="unsupported key type"):
+        RibbonFilter([1]).contains_many(array.array("f", [1.0]))
+    # bytes-like objects stay single keys, even when they wrap an integer array
+    with pytest.raises(TypeError, match="iterable of keys"):
+        RibbonFilter(memoryview(array.array("q", [1, 2])))
+    # array('B') is an array of small ints, not a bytes key
+    assert 255 in RibbonFilter(array.array("B", [0, 255]), fp_bits=32)
+
+
+def test_numpy_interop() -> None:
+    np = pytest.importorskip("numpy")
+    for dtype in ("int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "<i8", ">i8"):
+        values = np.arange(0, 3000, dtype=dtype)
+        f = RibbonFilter(values, fp_bits=24)
+        assert f.to_bytes() == RibbonFilter([int(v) for v in values], fp_bits=24).to_bytes()
+        assert f.contains_many(values) == [True] * 3000
+    arr = np.arange(0, 20_000, dtype="int64")
+    f = RibbonFilter(arr, fp_bits=32)
+    strided = arr[::2]  # not C-contiguous: handled by the generic path, same answers
+    assert f.contains_many(strided) == [True] * len(strided)
+    assert RibbonFilter(strided).to_bytes() == RibbonFilter([int(v) for v in strided]).to_bytes()
+    negatives = np.arange(20_000, 40_000, dtype="int64")
+    assert not any(f.contains_many(negatives))
+    with pytest.raises(TypeError, match="unsupported key type"):
+        RibbonFilter(np.array([1.5, 2.5]))
+    with pytest.raises(TypeError):
+        RibbonFilter(np.zeros((3, 3), dtype="int64"))  # 2-D: rows are not keys
+    assert np.int64(5) in RibbonFilter([5])  # numpy scalars are ints through __index__

@@ -159,7 +159,91 @@ static int reject_single_key(PyObject *keys, const char *what) {
   return 0;
 }
 
+/* A 1-D C-contiguous buffer of integers (array.array, numpy) is an array of int keys, hashed exactly as the same
+ * ints would be one by one, but in C and without the GIL. Returns 1 if handled, 0 if the object is not such a buffer
+ * (the caller then iterates it), -1 with an exception set. */
+static int int_array_layout(const Py_buffer *v, int *is_signed) {
+  const char *fmt = v->format ? v->format : "B";
+  if (v->ndim != 1) return 0;
+  if (*fmt == '@' || *fmt == '=') fmt++;
+  else if (*fmt == '<') {
+    const unsigned one = 1;
+    if (*(const unsigned char *)&one != 1) return 0; /* little-endian format on a big-endian host: iterate instead */
+    fmt++;
+  }
+  if (fmt[0] == '\0' || fmt[1] != '\0') return 0;
+  Py_ssize_t size = v->itemsize;
+  switch (fmt[0]) {
+    case 'b': *is_signed = 1; return size == 1 ? 1 : 0;
+    case 'B': *is_signed = 0; return size == 1 ? 1 : 0;
+    case 'h': *is_signed = 1; return size == 2 ? 2 : 0;
+    case 'H': *is_signed = 0; return size == 2 ? 2 : 0;
+    case 'i': *is_signed = 1; return size == 4 ? 4 : 0;
+    case 'I': *is_signed = 0; return size == 4 ? 4 : 0;
+    case 'l': *is_signed = 1; return (size == 4 || size == 8) ? (int)size : 0;
+    case 'L': *is_signed = 0; return (size == 4 || size == 8) ? (int)size : 0;
+    case 'q': *is_signed = 1; return size == 8 ? 8 : 0;
+    case 'Q': *is_signed = 0; return size == 8 ? 8 : 0;
+    default: return 0;
+  }
+}
+
+static void hash_int_array(const unsigned char *data, size_t count, int size, int is_signed, uint64_t seed,
+                           uint64_t *out) {
+  for (size_t i = 0; i < count; i++) {
+    uint64_t raw = 0;
+    memcpy(&raw, data + i * (size_t)size, (size_t)size); /* native byte order, any alignment */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    raw >>= 8 * (8 - size);
+#endif
+    if (is_signed) {
+      int shift = 64 - 8 * size; /* sign-extend from the item width */
+      out[i] = rb_hash_i64((int64_t)(raw << shift) >> shift, seed);
+    } else if (raw < (UINT64_C(1) << 63)) {
+      out[i] = rb_hash_i64((int64_t)raw, seed);
+    } else { /* uint64 >= 2**63 is outside int64: the canonical 9-byte little-endian encoding, as for a Python int */
+      unsigned char enc[9];
+      for (int k = 0; k < 8; k++) enc[k] = (unsigned char)(raw >> (8 * k));
+      enc[8] = 0;
+      out[i] = rb_hash_bytes(enc, 9, seed, RB_KEY_BIGINT);
+    }
+  }
+}
+
+static int collect_int_array(PyObject *keys, uint64_t seed, HashVec *hv) {
+  if (PyUnicode_Check(keys) || PyBytes_Check(keys) || PyByteArray_Check(keys) ||
+      PyObject_TypeCheck(keys, &PyMemoryView_Type) || !PyObject_CheckBuffer(keys))
+    return 0;
+  Py_buffer view;
+  if (PyObject_GetBuffer(keys, &view, PyBUF_FORMAT | PyBUF_C_CONTIGUOUS) < 0) {
+    PyErr_Clear(); /* e.g. a strided numpy slice: the generic iteration path still handles it */
+    return 0;
+  }
+  int is_signed = 0;
+  int size = int_array_layout(&view, &is_signed);
+  if (size == 0) {
+    PyBuffer_Release(&view);
+    return 0;
+  }
+  size_t count = (size_t)view.len / (size_t)size;
+  uint64_t *data = (uint64_t *)malloc(count ? count * sizeof(uint64_t) : 1);
+  if (!data) {
+    PyBuffer_Release(&view);
+    PyErr_NoMemory();
+    return -1;
+  }
+  Py_BEGIN_ALLOW_THREADS
+  hash_int_array((const unsigned char *)view.buf, count, size, is_signed, seed, data);
+  Py_END_ALLOW_THREADS
+  PyBuffer_Release(&view);
+  hv->data = data;
+  hv->len = hv->cap = count;
+  return 1;
+}
+
 static int collect_hashes(PyObject *keys, uint64_t seed, HashVec *hv, const char *what) {
+  int handled = collect_int_array(keys, seed, hv);
+  if (handled != 0) return handled < 0 ? -1 : 0;
   if (reject_single_key(keys, what) < 0) return -1;
   Py_ssize_t hint = PyObject_Size(keys);
   if (hint < 0) { /* generators and other unsized iterables */
@@ -409,7 +493,8 @@ static PyObject *Filter_get_bits_per_key(PyObject *obj, void *Py_UNUSED(closure)
 static PyMethodDef Filter_methods[] = {
     {"contains_many", Filter_contains_many, METH_O,
      "contains_many($self, keys, /)\n--\n\nReturn a list of bools, one per key: whether each key is possibly in the filter.\n\n"
-     "Large batches release the GIL while probing."},
+     "`keys` is an iterable of keys or a 1-D integer buffer (array.array, numpy), which is much faster. Large batches\n"
+     "release the GIL while probing."},
     {"to_bytes", Filter_to_bytes, METH_NOARGS,
      "to_bytes($self, /)\n--\n\nReturn the filter in the versioned, little-endian serialization format."},
     {"from_buffer", (PyCFunction)(void (*)(void))Filter_from_buffer, METH_VARARGS | METH_KEYWORDS | METH_CLASS,
@@ -429,7 +514,8 @@ static PyType_Slot Filter_slots[] = {
     {Py_tp_doc,
      (void *)"RibbonFilter(keys, *, fp_bits=8, seed=0, overhead=None, max_attempts=32)\n--\n\n"
              "An immutable approximate-membership filter (standard ribbon filter).\n\n"
-             "Build it from an iterable of keys (bytes, bytearray, memoryview, str or int). `key in filter` never gives a\n"
+             "Build it from an iterable of keys (bytes, bytearray, memoryview, str or int), or from a 1-D integer buffer such as\n"
+             "an array.array or numpy array (hashed in C, same result as the ints one by one). `key in filter` never gives a\n"
              "false negative and gives a false positive with probability about 2**-fp_bits. Safe to query from many threads."},
     {Py_tp_new, (void *)Filter_new},
     {Py_tp_dealloc, (void *)Filter_dealloc},

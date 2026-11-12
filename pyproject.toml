@@ -37,7 +37,7 @@ Changelog = "https://github.com/Zikithezikit/pyribbon/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # xxhash is only a test oracle for the vendored XXH3 (never imported by the package).
-dev = ["pytest", "hypothesis", "xxhash", "ruff", "mypy", "build", "twine"]
+dev = ["pytest", "hypothesis", "xxhash", "numpy", "ruff", "mypy", "build", "twine"]
 bench = ["pyfusefilter", "rbloom", "matplotlib", "numpy", "xxhash"]
 
 [tool.setuptools]
@@ -76,7 +76,7 @@ strict = true
 
 [tool.cibuildwheel]
 skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"
-test-requires = ["pytest", "hypothesis", "xxhash"]
+test-requires = ["pytest", "hypothesis", "xxhash"]  # numpy interop tests skip when numpy is absent
 test-sources = ["tests"]
 test-command = "pytest -m 'not slow' tests"
 
