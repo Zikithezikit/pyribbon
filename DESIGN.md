@@ -257,8 +257,7 @@ and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
   keys and hashed in C without the GIL, with exactly the hashes the same ints would get one by one (uint64 values >= 2^63 take
   the bigint encoding). Non-contiguous, multi-dimensional, big-endian-format or float buffers fall back to plain iteration (and so to
   its errors). `str`, `bytes`, `bytearray` and `memoryview` passed as `keys` raise `TypeError`: iterating one key's characters
-  or bytes is almost always a bug. Measured effect (one idle-ish core): `contains_many` over 1e6 ints 40 ns/key from a list,
-  32 ns/key from an `array('q')`; build 70 ns/key from a list, 72 from numpy (the C core alone: 56 ns/key at n = 1e6).
+  or bytes is almost always a bug. The benchmark reports both batch variants (`docs/benchmark.md`).
 * **Types.** Ship `py.typed` and `_ribbon.pyi` (stubs for the C module), checked with `mypy.stubtest` in CI so the stubs
   cannot drift from the compiled module.
 
