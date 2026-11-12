@@ -76,7 +76,7 @@ Python's built-in `hash()` is **never** used (randomized per process; breaks sav
 | `bytes`, `bytearray`, `memoryview` (C-contiguous) | payload bytes `P`; `h0 = XXH3_64bits(P)` (seed 0, default secret). A `memoryview` is treated as raw bytes regardless of its format. |
 | `str` | UTF-8 bytes (strict; a lone surrogate raises `UnicodeEncodeError`); `h0 = XXH3_64bits(P) ^ TAG_STR` |
 | `int` (or anything with `__index__`) in `[-2^63, 2^63)` | `h0 = (uint64_t)value ^ TAG_INT` (two's complement of the numeric value; no byte order involved) |
-| any other `int` | bytes of the minimal little-endian two's-complement encoding; `h0 = XXH3_64bits(P) ^ TAG_BIGINT` |
+| any other `int` | `P` = little-endian two's complement of exactly `value.bit_length() // 8 + 1` bytes (one canonical encoding per value); `h0 = XXH3_64bits(P) ^ TAG_BIGINT` |
 | anything else (`float`, `None`, tuples, ...) | `TypeError`. No implicit `str()`: `51` and `"51"` are different keys and floats are not keys |
 
 `TAG_STR = 0x6a09e667f3bcc908`, `TAG_INT = 0xbb67ae8584caa73b`, `TAG_BIGINT = 0x3c6ef372fe94f82b` (SHA-512 initial
@@ -89,7 +89,7 @@ values, chosen as nothing-up-my-sleeve), and the bytes tag is 0. So `b"a"`, `"a"
 * XXH3-64 is vendored (`xxhash.h`, BSD-2-Clause, notice shipped in sdist and wheels) with
   `XXH_FORCE_MEMORY_ACCESS=0` (the default mode let GCC miscompile in BuRR's experience, R§10), scalar mode, fixed seed.
   Why XXH3: the only candidate with a written output-stability promise, a spec, in-repo test vectors, and
-  byte-order-independent output (R§11). Fallback if you object to a 5k-line vendored header: SipHash-2-4 (CC0, 185
+  byte-order-independent output (R§11). Fallback if you object to a 7.5k-line vendored header: SipHash-2-4 (CC0, 185
   lines, ~5x slower on short keys per third-party numbers).
 * The int path is defined on the numeric value and `mix64` is a bijection, so distinct int64 keys never collide in `H`.
 * Distinct bytes/str keys collide in `H` with probability ≈ n²/2^65 (0.027 expected colliding pairs at n = 1e9). A
@@ -240,26 +240,40 @@ and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
 
 ```python
 class RibbonFilter:
-    def __init__(self, keys: Iterable[Key], *, fp_bits: int = 8, seed: int = 0,
-                 overhead: float | None = None, max_attempts: int = 32) -> None: ...
+    def __init__(
+        self,
+        keys: Iterable[Key],
+        *,
+        fp_bits: int = 8,
+        seed: int = 0,
+        overhead: float | None = None,
+        max_attempts: int = 32,
+    ) -> None: ...
     def __contains__(self, key: Key) -> bool: ...
     def contains_many(self, keys: Iterable[Key]) -> list[bool]: ...
-    def __len__(self) -> int: ...              # number of keys supplied; duplicates are counted
+    def __len__(self) -> int: ...  # number of keys supplied; duplicates are counted
     def to_bytes(self) -> bytes: ...
     @classmethod
     def from_buffer(cls, buffer: Buffer, *, verify: bool = True) -> RibbonFilter: ...  # zero copy
     @property
-    def size_in_bytes(self) -> int: ...        # len(to_bytes()), header included
+    def size_in_bytes(self) -> int: ...  # len(to_bytes()), header included
     @property
-    def bits_per_key(self) -> float: ...       # 8 * size_in_bytes / len(self); 0.0 for an empty filter
+    def bits_per_key(self) -> float: ...  # 8 * size_in_bytes / len(self); 0.0 for an empty filter
     @property
     def fp_bits(self) -> int: ...
-    def __repr__(self) -> str: ...             # RibbonFilter(keys=1000, fp_bits=8, size_in_bytes=1146)
-    def __reduce__(self) -> ...: ...           # pickle and copy work: rebuilt from to_bytes()
+    def __repr__(self) -> str: ...  # RibbonFilter(keys=1000, fp_bits=8, size_in_bytes=1146)
+    def __reduce__(self) -> ...: ...  # pickle and copy work: rebuilt from to_bytes()
 
-Key = bytes | bytearray | memoryview | str | int       # §3.1
+
+Key = bytes | bytearray | memoryview | str | int  # §3.1
+
+
 class RibbonError(Exception): ...
-class ConstructionError(RibbonError): ...      # all attempts failed
+
+
+class ConstructionError(RibbonError): ...  # all attempts failed
+
+
 class FormatError(RibbonError, ValueError): ...  # bad/truncated/corrupt serialized data
 ```
 
@@ -353,7 +367,7 @@ contents: read`.
 
 * The ε(n) fit rests on RocksDB's simulation (extrapolated beyond 2^17 slots) and [R Table 1]; v0.1 depends on Phase 2
   confirming it. The retry-with-growth rule bounds the damage but not the speed.
-* XXH3 is vendored from a 5.2k-line header; I trust its stability promise and test vectors but have not audited it.
+* XXH3 is vendored from a 7.5k-line header; I trust its stability promise and test vectors but have not audited it.
 * Build memory: the banding arrays take 12 bytes/slot (about 14 bytes/key at the w=64 overhead) plus 8 bytes/key for `H`,
   roughly 22 bytes/key, about 2.2 GB at `n = 1e8`, until sharding exists.
 * Windows/macOS builds, cibuildwheel and the MSVC fallbacks are unverified (R§12).

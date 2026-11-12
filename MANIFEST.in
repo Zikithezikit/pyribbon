@@ -1,0 +1,12 @@
+include LICENSE CHANGELOG.md CONTRIBUTING.md DESIGN.md RESEARCH.md stubtest-allowlist.txt
+graft LICENSES
+graft core/include
+graft core/src
+graft core/vendor
+graft core/tests
+graft core/tools
+graft core/fuzz
+include core/Makefile
+graft tests
+prune core/build
+global-exclude *.py[cod] __pycache__ *.so

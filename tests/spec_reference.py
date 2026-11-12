@@ -64,6 +64,25 @@ def hash_i64(value: int, seed: int) -> int:
     return mix64((((value & MASK) ^ TAG_INT ^ seed) + GAMMA) & MASK)
 
 
+def hash_int(value: int, seed: int) -> int:
+    """Return the master hash of any int: int64 by value, anything else as length ``bit_length // 8 + 1`` bytes."""
+    if -(1 << 63) <= value < (1 << 63):
+        return hash_i64(value, seed)
+    encoded = value.to_bytes(value.bit_length() // 8 + 1, "little", signed=True)
+    return hash_bytes(encoded, seed, KIND_BIGINT)
+
+
+def hash_key(key: object, seed: int) -> int:
+    """Return the master hash of a Python key (DESIGN.md section 3.1)."""
+    if isinstance(key, int):
+        return hash_int(key, seed)
+    if isinstance(key, str):
+        return hash_bytes(key.encode("utf-8"), seed, KIND_STR)
+    if isinstance(key, (bytes, bytearray, memoryview)):
+        return hash_bytes(bytes(key), seed, KIND_BYTES)
+    raise TypeError(type(key).__name__)
+
+
 def derive(h: int, attempt: int, num_rows: int, r: int) -> tuple[int, int, int]:
     """Return ``(start, coeff, fp)`` for master hash ``h`` (DESIGN.md section 3.2)."""
     state = h ^ mix64(((attempt + 1) * GAMMA) & MASK)

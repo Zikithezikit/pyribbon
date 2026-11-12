@@ -15,7 +15,6 @@ keywords = ["ribbon-filter", "bloom-filter", "xor-filter", "approximate-membersh
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: C",
   "Programming Language :: Python :: 3",
@@ -57,6 +56,7 @@ markers = ["slow: statistical tests with many millions of probes (deselect with 
 [tool.ruff]
 line-length = 120
 src = ["src"]
+extend-exclude = ["*.md", "core/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

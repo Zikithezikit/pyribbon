@@ -13,4 +13,4 @@ __pycache__/
 .coverage
 core/build/
 wheelhouse/
-docs/benchmark.json
+.venv-*/
