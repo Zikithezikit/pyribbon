@@ -1,0 +1,330 @@
+/*
+ * ribbon.c - standard ribbon filter, width w = 64, interleaved column layout (ICML).
+ *
+ * Sources (see RESEARCH.md): [R] Dillinger & Walzer, arXiv:2103.02515, sections 2-5.
+ *  - one equation per key: coeff . Z[start .. start+63] = fp, with bit 0 of coeff forced to 1 [R p3];
+ *  - on-the-fly banded Gaussian elimination in arrival order, no sorting [R sec. 3, Alg. 1];
+ *  - back-substitution from the last row to the first [R p4];
+ *  - interleaved column-major storage: for each block of 64 rows, r words, word j = column j [R sec. 5.2];
+ *  - failure is handled by retrying with a new seed or a slightly larger table [R sec. 5.3].
+ * Format and derivation details: DESIGN.md sections 3-5.
+ */
+#include <stdlib.h>
+#include <string.h>
+
+#include "rb_internal.h"
+
+struct rb_filter {
+  uint64_t num_keys;
+  uint64_t num_rows; /* 0, or a multiple of 64 and >= 128 */
+  uint64_t seed;
+  uint64_t payload_xxh3;
+  uint32_t fp_bits;
+  uint32_t attempt;
+  const uint8_t *payload; /* (num_rows / 64) * fp_bits little-endian 64-bit words */
+  uint8_t *owned;         /* non-NULL when the filter owns its payload */
+};
+
+static const char rb_magic[8] = {'P', 'Y', 'R', 'I', 'B', 'B', 'O', 'N'};
+
+/* ------------------------------------------------------------------------------------ */
+/* parameters, status strings                                                           */
+
+rb_params rb_params_default(void) {
+  rb_params p;
+  p.fp_bits = RB_DEFAULT_FP_BITS;
+  p.max_attempts = RB_DEFAULT_MAX_ATTEMPTS;
+  p.overhead = -1.0;
+  p.seed = 0;
+  return p;
+}
+
+const char *rb_strerror(rb_status status) {
+  switch (status) {
+    case RB_OK: return "ok";
+    case RB_E_INVALID_ARG: return "invalid argument";
+    case RB_E_NOMEM: return "out of memory";
+    case RB_E_CONSTRUCT: return "construction failed: every attempt hit an unsolvable system";
+    case RB_E_TOO_LARGE: return "size out of the supported range";
+    case RB_E_TRUNCATED: return "buffer too short";
+    case RB_E_MAGIC: return "bad magic number: not a pyribbon filter";
+    case RB_E_VERSION: return "unsupported format version";
+    case RB_E_FORMAT: return "inconsistent or unsupported header";
+    case RB_E_CHECKSUM: return "checksum mismatch";
+  }
+  return "unknown status";
+}
+
+/* ------------------------------------------------------------------------------------ */
+/* sizing                                                                               */
+
+/* Overhead (extra rows / n) for ~95% per-attempt success, indexed by k = floor(log2 n) - 7 for
+ * k = 7..22. Measured with benchmarks/research/sim_width.c (w = 64) plus a 0.3 pp margin and
+ * monotone smoothing; regenerated against the real core by `make ovh-sweep`. */
+static const double rb_overhead_table[16] = {0.061, 0.052, 0.052, 0.050, 0.054, 0.059, 0.067, 0.072,
+                                             0.083, 0.091, 0.099, 0.102, 0.111, 0.118, 0.124, 0.130};
+/* Beyond 2^22 the overhead is extrapolated at the measured slope (0.56 pp per doubling, rounded up). */
+#define RB_OVERHEAD_SLOPE 0.006
+
+double rb_default_overhead(uint64_t n) {
+  if (n <= 128) return rb_overhead_table[0];
+  unsigned k = 0;
+  for (uint64_t t = n; t > 1; t >>= 1) k++;
+  double frac = (double)(n - (UINT64_C(1) << k)) / (double)(UINT64_C(1) << k); /* n = 2^k (1 + frac) */
+  if (k >= 22) return rb_overhead_table[15] + RB_OVERHEAD_SLOPE * ((double)(k - 22) + frac);
+  return rb_overhead_table[k - 7] + frac * (rb_overhead_table[k - 6] - rb_overhead_table[k - 7]);
+}
+
+static uint64_t rb_round_up64(uint64_t x) { return (x + 63u) & ~UINT64_C(63); }
+
+/* Rows for n keys: ceil(n (1 + eps)) rounded up to a multiple of 64, at least 128. */
+static rb_status rb_initial_rows(uint64_t n, double eps, uint64_t *rows) {
+  double want = (double)n * (1.0 + eps);
+  if (!(want < (double)RB_MAX_ROWS / 2.0)) return RB_E_TOO_LARGE;
+  uint64_t m = (uint64_t)want;
+  if ((double)m < want) m++;
+  m = rb_round_up64(m);
+  if (m < 2u * RB_WIDTH) m = 2u * RB_WIDTH;
+  *rows = m;
+  return RB_OK;
+}
+
+/* Grow by about (w+1)/w, at least one block: the paper's alternative to reseeding [R p9]. */
+static rb_status rb_grow_rows(uint64_t *rows) {
+  uint64_t add = *rows / RB_WIDTH;
+  if (add < RB_WIDTH) add = RB_WIDTH;
+  uint64_t m = rb_round_up64(*rows + add);
+  if (m > RB_MAX_ROWS) return RB_E_TOO_LARGE;
+  *rows = m;
+  return RB_OK;
+}
+
+/* ------------------------------------------------------------------------------------ */
+/* construction                                                                         */
+
+/* Insert one equation. Slot i holds a coefficient word whose bit 0 is its pivot (0 = empty)
+ * and a result word. Both the incoming and the stored word have bit 0 set, so after the XOR
+ * bit 0 is clear: the shift below is by 1..63 and never reaches the word width [R Alg. 1].
+ * Returns 1 on success (including a redundant equation), 0 if the system became unsolvable. */
+static int rb_band_insert(uint64_t *coeff, uint32_t *res, uint64_t i, uint64_t c, uint32_t b) {
+  for (;;) {
+    uint64_t stored = coeff[i];
+    if (stored == 0) {
+      coeff[i] = c;
+      res[i] = b;
+      return 1;
+    }
+    c ^= stored;
+    b ^= res[i];
+    if (c == 0) return b == 0; /* duplicate / dependent but consistent equation, or a contradiction */
+    unsigned j = rb_ctz64(c);  /* 1..63 */
+    i += j;
+    c >>= j;
+  }
+}
+
+/* Back-substitution into the interleaved layout [R p4, sec. 5.2]. st[j] holds, at bit k, the
+ * solution bit of column j at row i + k; when i is a multiple of 64 it is exactly the word
+ * for block i / 64, column j. Rows are processed from the last to the first. */
+static void rb_back_substitute(const uint64_t *coeff, const uint32_t *res, uint64_t rows, uint32_t r,
+                               uint8_t *payload) {
+  uint64_t st[RB_MAX_FP_BITS] = {0};
+  for (uint64_t i = rows; i-- > 0;) {
+    uint64_t c = coeff[i];
+    uint32_t b = res[i];
+    for (uint32_t j = 0; j < r; j++) {
+      st[j] <<= 1; /* bit 0 = row i, still unknown (0): the dot product below excludes it */
+      uint64_t v = rb_parity64(st[j] & c) ^ (uint64_t)((b >> j) & 1u);
+      st[j] |= v;
+    }
+    if ((i & 63u) == 0) {
+      uint8_t *block = payload + (i >> 6) * r * 8u;
+      for (uint32_t j = 0; j < r; j++) rb_store_le64(block + 8u * j, st[j]);
+    }
+  }
+}
+
+static size_t rb_payload_bytes(uint64_t rows, uint32_t r) { return (size_t)((rows >> 6) * r * 8u); }
+
+static rb_filter *rb_new_filter(void) {
+  rb_filter *f = (rb_filter *)calloc(1, sizeof *f);
+  return f;
+}
+
+rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb_filter **out, rb_build_info *info) {
+  if (!out) return RB_E_INVALID_ARG;
+  *out = NULL;
+  rb_params p = params ? *params : rb_params_default();
+  if (p.fp_bits < RB_MIN_FP_BITS || p.fp_bits > RB_MAX_FP_BITS) return RB_E_INVALID_ARG;
+  if (p.max_attempts == 0) p.max_attempts = RB_DEFAULT_MAX_ATTEMPTS;
+  if (p.max_attempts > RB_MAX_ATTEMPTS) return RB_E_INVALID_ARG;
+  if (p.overhead != p.overhead || p.overhead > 4.0) return RB_E_INVALID_ARG; /* NaN or absurd */
+  if (n > 0 && !hashes) return RB_E_INVALID_ARG;
+  if ((uint64_t)n > RB_MAX_KEYS) return RB_E_TOO_LARGE;
+
+  rb_filter *f = rb_new_filter();
+  if (!f) return RB_E_NOMEM;
+  f->num_keys = n;
+  f->seed = p.seed;
+  f->fp_bits = p.fp_bits;
+
+  if (n == 0) { /* valid empty filter: header only, every query is false */
+    f->payload_xxh3 = rb_xxh3_64(NULL, 0);
+    f->payload = (const uint8_t *)"";
+    if (info) { info->attempts = 0; info->num_rows = 0; }
+    *out = f;
+    return RB_OK;
+  }
+
+  double eps = p.overhead < 0.0 ? rb_default_overhead(n) : p.overhead;
+  uint64_t rows;
+  rb_status st = rb_initial_rows(n, eps, &rows);
+  uint64_t *coeff = NULL;
+  uint32_t *res = NULL;
+  uint64_t alloc_rows = 0;
+  for (uint32_t attempt = 0; st == RB_OK && attempt < p.max_attempts; attempt++) {
+    if (attempt >= 2) { /* reseeding alone first; from the third attempt also grow the table */
+      st = rb_grow_rows(&rows);
+      if (st != RB_OK) break;
+    }
+    if (rows > alloc_rows) {
+      if (rows > SIZE_MAX / 16u) { st = RB_E_TOO_LARGE; break; }
+      free(coeff);
+      free(res);
+      coeff = (uint64_t *)calloc((size_t)rows, sizeof *coeff);
+      res = (uint32_t *)calloc((size_t)rows, sizeof *res);
+      alloc_rows = rows;
+      if (!coeff || !res) { st = RB_E_NOMEM; break; }
+    } else {
+      memset(coeff, 0, (size_t)rows * sizeof *coeff);
+      memset(res, 0, (size_t)rows * sizeof *res);
+    }
+    uint64_t num_starts = rows - RB_WIDTH + 1u;
+    size_t i = 0;
+    for (; i < n; i++) {
+      rb_eq eq = rb_derive(hashes[i], attempt, num_starts, p.fp_bits);
+      if (!rb_band_insert(coeff, res, eq.start, eq.coeff, eq.fp)) break;
+    }
+    if (i < n) continue; /* unsolvable: next attempt (st stays RB_OK; exhaustion is reported after the loop) */
+
+    size_t payload_len = rb_payload_bytes(rows, p.fp_bits);
+    uint8_t *payload = (uint8_t *)malloc(payload_len);
+    if (!payload) { st = RB_E_NOMEM; break; }
+    rb_back_substitute(coeff, res, rows, p.fp_bits, payload);
+    f->num_rows = rows;
+    f->attempt = attempt;
+    f->owned = payload;
+    f->payload = payload;
+    f->payload_xxh3 = rb_xxh3_64(payload, payload_len);
+    if (info) { info->attempts = attempt + 1u; info->num_rows = rows; }
+    free(coeff);
+    free(res);
+    *out = f;
+    return RB_OK;
+  }
+  free(coeff);
+  free(res);
+  free(f);
+  return st == RB_OK ? RB_E_CONSTRUCT : st;
+}
+
+/* ------------------------------------------------------------------------------------ */
+/* query                                                                                */
+
+int rb_contains(const rb_filter *f, uint64_t hash) {
+  if (f->num_rows == 0) return 0;
+  uint32_t r = f->fp_bits;
+  rb_eq eq = rb_derive(hash, f->attempt, f->num_rows - RB_WIDTH + 1u, r);
+  unsigned off = (unsigned)(eq.start & 63u);
+  /* start <= num_rows - 64, so when off > 0 the next block exists: no read past the payload. */
+  const uint8_t *blk = f->payload + (eq.start >> 6) * r * 8u;
+  for (uint32_t j = 0; j < r; j++) {
+    uint64_t bit = rb_parity64(rb_load_le64(blk + 8u * j) & (eq.coeff << off));
+    if (off != 0) /* a shift by 64 is undefined behaviour, so the spill-over word is skipped at off == 0 */
+      bit ^= rb_parity64(rb_load_le64(blk + 8u * (r + j)) & (eq.coeff >> (64u - off)));
+    if (bit != (uint64_t)((eq.fp >> j) & 1u)) return 0; /* early exit: ~2 columns on average for a miss */
+  }
+  return 1;
+}
+
+void rb_contains_many(const rb_filter *f, const uint64_t *hashes, size_t n, uint8_t *out) {
+  for (size_t i = 0; i < n; i++) out[i] = (uint8_t)rb_contains(f, hashes[i]);
+}
+
+/* ------------------------------------------------------------------------------------ */
+/* serialization and loading (DESIGN.md section 5)                                      */
+
+size_t rb_serialized_size(const rb_filter *f) { return RB_HEADER_SIZE + rb_payload_bytes(f->num_rows, f->fp_bits); }
+
+rb_status rb_serialize(const rb_filter *f, void *dst, size_t capacity) {
+  size_t payload_len = rb_payload_bytes(f->num_rows, f->fp_bits);
+  if (!dst || capacity < RB_HEADER_SIZE + payload_len) return RB_E_INVALID_ARG;
+  uint8_t *h = (uint8_t *)dst;
+  memset(h, 0, RB_HEADER_SIZE);
+  memcpy(h, rb_magic, 8);
+  rb_store_le16(h + 8, RB_FORMAT_VERSION);
+  rb_store_le16(h + 10, RB_HEADER_SIZE);
+  h[12] = 6; /* width_log2 */
+  h[13] = (uint8_t)f->fp_bits;
+  h[14] = 1; /* hash id */
+  h[15] = 0; /* flags */
+  rb_store_le64(h + 16, f->num_keys);
+  rb_store_le64(h + 24, f->num_rows);
+  rb_store_le64(h + 32, f->seed);
+  rb_store_le32(h + 40, f->attempt);
+  rb_store_le64(h + 48, f->payload_xxh3);
+  rb_store_le64(h + 56, rb_xxh3_64(h, 56));
+  if (payload_len) memcpy(h + RB_HEADER_SIZE, f->payload, payload_len);
+  return RB_OK;
+}
+
+rb_status rb_from_buffer(const void *buf, size_t len, int verify_payload, rb_filter **out) {
+  if (!out) return RB_E_INVALID_ARG;
+  *out = NULL;
+  if (len < RB_HEADER_SIZE) return RB_E_TRUNCATED;
+  if (!buf) return RB_E_INVALID_ARG;
+  const uint8_t *h = (const uint8_t *)buf;
+  if (memcmp(h, rb_magic, 8) != 0) return RB_E_MAGIC;
+  if (rb_load_le16(h + 8) != RB_FORMAT_VERSION) return RB_E_VERSION;
+  if (rb_load_le16(h + 10) != RB_HEADER_SIZE) return RB_E_FORMAT;
+  if (rb_load_le64(h + 56) != rb_xxh3_64(h, 56)) return RB_E_CHECKSUM;
+  if (h[12] != 6 || h[14] != 1 || h[15] != 0 || rb_load_le32(h + 44) != 0) return RB_E_FORMAT;
+  uint32_t r = h[13];
+  if (r < RB_MIN_FP_BITS || r > RB_MAX_FP_BITS) return RB_E_FORMAT;
+  uint64_t num_keys = rb_load_le64(h + 16);
+  uint64_t rows = rb_load_le64(h + 24);
+  if (rows != 0 && ((rows & 63u) != 0 || rows < 2u * RB_WIDTH || rows > RB_MAX_ROWS)) return RB_E_FORMAT;
+  if (rows == 0 && num_keys != 0) return RB_E_FORMAT;
+  uint64_t payload_len = (rows >> 6) * r * 8u; /* rows <= 2^40, r <= 32: at most 2^42, no overflow */
+  uint64_t have = (uint64_t)len - RB_HEADER_SIZE;
+  if (have < payload_len) return RB_E_TRUNCATED;
+  if (have > payload_len) return RB_E_FORMAT; /* trailing bytes: slice the buffer to embed a filter */
+  const uint8_t *payload = h + RB_HEADER_SIZE;
+  uint64_t checksum = rb_load_le64(h + 48);
+  if (verify_payload && checksum != rb_xxh3_64(payload, (size_t)payload_len)) return RB_E_CHECKSUM;
+
+  rb_filter *f = rb_new_filter();
+  if (!f) return RB_E_NOMEM;
+  /* Every header field is copied here and never re-read from the buffer, so later changes to
+   * the buffer can alter query answers but not the bounds of any memory access. */
+  f->num_keys = num_keys;
+  f->num_rows = rows;
+  f->seed = rb_load_le64(h + 32);
+  f->payload_xxh3 = checksum;
+  f->fp_bits = r;
+  f->attempt = rb_load_le32(h + 40);
+  f->payload = payload;
+  *out = f;
+  return RB_OK;
+}
+
+void rb_free(rb_filter *f) {
+  if (!f) return;
+  free(f->owned);
+  free(f);
+}
+
+uint64_t rb_num_keys(const rb_filter *f) { return f->num_keys; }
+uint64_t rb_num_rows(const rb_filter *f) { return f->num_rows; }
+uint32_t rb_fp_bits(const rb_filter *f) { return f->fp_bits; }
+uint64_t rb_seed(const rb_filter *f) { return f->seed; }
