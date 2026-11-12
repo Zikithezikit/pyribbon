@@ -1,0 +1,16 @@
+.venv/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.so
+*.pyd
+*.o
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+core/build/
+wheelhouse/
+docs/benchmark.json

@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyribbon"
+version = "0.1.0"
+description = "Ribbon filters for Python: a static approximate-membership filter with a C core."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "LICENSES/*"]
+authors = [{ name = "Yoav Haimov", email = "haimovyoav.work@gmail.com" }]
+keywords = ["ribbon-filter", "bloom-filter", "xor-filter", "approximate-membership", "probabilistic", "data-structure"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: C",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Zikithezikit/pyribbon"
+Documentation = "https://github.com/Zikithezikit/pyribbon#readme"
+Issues = "https://github.com/Zikithezikit/pyribbon/issues"
+Changelog = "https://github.com/Zikithezikit/pyribbon/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# xxhash is only a test oracle for the vendored XXH3 (never imported by the package).
+dev = ["pytest", "hypothesis", "xxhash", "ruff", "mypy", "build", "twine"]
+bench = ["pyfusefilter", "rbloom", "matplotlib"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pyribbon = ["py.typed", "*.pyi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: statistical tests with many millions of probes (deselect with -m 'not slow')"]
+
+[tool.ruff]
+line-length = 120
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501", "B018"]
+"benchmarks/*" = ["E501", "B018", "E402"]
+"examples/*" = ["E501"]
+"setup.py" = ["D"]
+
+[tool.mypy]
+files = ["src"]
+strict = true
+
+[tool.cibuildwheel]
+skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"
+test-requires = ["pytest", "hypothesis", "xxhash"]
+test-sources = ["tests"]
+test-command = "pytest -m 'not slow' tests"
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]
