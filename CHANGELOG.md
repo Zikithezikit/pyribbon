@@ -22,6 +22,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 - `make coverage` (line and branch coverage of the C core and the extension with gcc and gcovr), allocation-failure and extension error-path tests, and a Coverage workflow with a line-coverage gate on the core.
 
+- Building a filter of 1e6 keys or more is about 15 to 25% faster: keys are grouped by start row before insertion, with byte-identical output.
+
 ## [0.1.0] - 2026-11-12
 
 First release.

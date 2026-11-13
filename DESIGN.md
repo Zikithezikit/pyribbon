@@ -173,6 +173,28 @@ rb_status rb_serialize(const rb_filter *f, void *dst, size_t cap);
   the XOR and `c != 0` before `ctz`, so `1 ≤ j ≤ 63` and no shift reaches the type width. No pre-sort (R§4).
   Back-substitution runs `i = m-1 .. 0`, keeps one 64-bit running word per column, and writes the interleaved layout
   directly, one flushed block of `r` words per 64 rows (R§4).
+  Order of insertion. The serialized bytes do not depend on the order in which keys are inserted (the pivot set and the
+  zero-free-variable solution are order-invariant, and `tests/test_property.py` checks it), so for tables of at least 2^18
+  rows `rb_build` first groups the keys by start row: a counting sort on `start >> shift`, with at most 1024 buckets of at
+  least 4096 rows (64 KiB of slots), and then inserts bucket by bucket. The slots of a bucket stay in cache and the
+  elimination walks memory in increasing order. Extra temporary memory is one 8-byte word per key (80 MB at 1e7 keys, next
+  to 185 MB of slots) and two more passes over the hashes that derive only the start row. `rb_build_ex` (internal) forces
+  either order, and `test_core.c` compares the serialized filters of both for many sizes, widths, failures with retries
+  and duplicate keys. Measured with `core/tools/bench_build.c` and `core/tools/ab_build.sh` (old and new binaries run
+  alternately, pinned to one CPU, 5 rounds of 7 runs, i7-7700 shared with other jobs, so only the ratio means anything):
+  ns per key at r = 8, old to new, 1e6: 54.0 to 40.8, 1e7: 71.8 to 56.1; at r = 16, 1e6: 68.5 to 55.2, 1e7: 86.8 to
+  70.9. At 1e3, 1e4 and 1e5 keys the old path is kept and the ratio is 1.00 to 1.02 (within the spread of 2 to 10%).
+  The same build from Python (`RibbonFilter(range(n))` / `array('q')`, ns per key, median of 4 interleaved rounds):
+  1e6 71.8 to 61.7 / 57.2 to 46.3, 1e7 95.1 to 78.4 / 80.0 to 63.7, 1e5 unchanged (59 / 43). Measured and not
+  kept: (1) bucketing below 2^18 rows is 7 to 10% slower than arrival order at 1e4 to 1e5 keys (6% faster at 3e5);
+  (2) interleaving 2, 4 or 8 insertions in lock step to hide the dependent loads changed nothing, because an insertion
+  takes about 3.5 probes and the cost is mostly branch mispredictions and the key derivation (about 6 ns), not latency;
+  (3) fixing `r` at compile time for 8 and 16 in back-substitution, a software prefetch of the descending slot stream,
+  and a fold shared by eight columns for the parity changed nothing or were slower; back-substitution is 15 ns per key
+  at r = 8 and 30 at r = 16, and `-mpopcnt` would cut it by about 30% but the wheels target generic x86-64; (4) the
+  slot array is allocated once per `rb_build` call and only cleared between retries, so there is nothing to reuse, and
+  `calloc` costs under 1 ns per key; (5) other bucket settings: 256-row buckets were 5 to 8% slower, and 2^12 to 2^14 rows
+  per bucket with 256 to 16384 buckets differed from the chosen setting by under 4%, which is within the noise.
 * Query. `s = start`, `blk = s >> 6`, `off = s & 63`; for each column `j < r`: the result bit is
   `parity(W[blk][j] & (c << off)) ^ parity(W[blk+1][j] & (c >> (64 - off)))` (coefficient bit `k` selects row `s+k`; the
   second term covers the bits that spill into the next block), with the second term skipped when `off == 0` (a shift by 64 is undefined behaviour). Early exit at the first mismatching
