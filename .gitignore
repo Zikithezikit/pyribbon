@@ -14,3 +14,4 @@ __pycache__/
 core/build/
 wheelhouse/
 .venv-*/
+.claude/
