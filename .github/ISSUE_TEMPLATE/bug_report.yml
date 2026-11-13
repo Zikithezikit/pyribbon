@@ -1,0 +1,34 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: input
+    id: pyribbon-version
+    attributes:
+      label: pyribbon version
+      description: Output of `python -c "import pyribbon; print(pyribbon.__version__)"`.
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version and platform
+      description: For example, 3.12.4 on Ubuntu 24.04 x86-64, or macOS 15 arm64.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The shortest script that shows the problem.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: exception
+    attributes:
+      label: Exception text
+      description: The full traceback or the wrong output. Say what you expected instead.
+      render: text
+    validations:
+      required: true
