@@ -401,7 +401,9 @@ class _LyingLen:
         return iter(self.items)
 
 
-@pytest.mark.parametrize("claimed", [2**20 + 1, 2**31, 2**32 + 1, 2**60, 2**61, 2**61 + 1, 2**62, 2**63 - 1])
+@pytest.mark.parametrize(
+    "claimed", [n for n in (2**20 + 1, 2**31, 2**32 + 1, 2**60, 2**61, 2**61 + 1, 2**62, 2**63 - 1) if n <= sys.maxsize]
+)
 def test_huge_length_hint_cannot_corrupt_memory(claimed: int) -> None:
     # 2**61 * 8 wrapped to 0 bytes in the preallocation and the first writes went past the allocation
     keys = list(range(1000))
@@ -409,6 +411,12 @@ def test_huge_length_hint_cannot_corrupt_memory(claimed: int) -> None:
     assert len(f) == 1000 and all(k in f for k in keys)
     assert f.contains_many(_LyingLen(claimed, keys)) == [True] * 1000
     assert f.contains_many(_LyingLen(claimed, [10**6])) == [False]
+
+
+def test_length_hint_above_sys_maxsize_is_the_error_from_len() -> None:
+    # CPython itself refuses such a __len__ (on a 32-bit build that includes 2**31); the error is not swallowed
+    with pytest.raises(OverflowError):
+        RibbonFilter(_LyingLen(sys.maxsize + 1, [1, 2, 3]))
 
 
 def test_errors_from_len_are_not_swallowed() -> None:
