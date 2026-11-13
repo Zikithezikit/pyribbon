@@ -8,6 +8,10 @@
  * GIL: key hashing touches Python objects and runs with the GIL held. rb_build and large rb_contains_many
  * batches run without it, touching only plain C memory (no Python objects, refcounts or PyMem allocators).
  * Single-key __contains__ never releases the GIL: save/restore costs more than the ~30 ns of work.
+ *
+ * Free-threaded builds (no GIL at all): the module declares Py_mod_gil = Py_MOD_GIL_NOT_USED. The audit is in DESIGN.md
+ * section 6: a filter is never written after creation, module state is written only in module_exec, and the code
+ * between the ALLOW_THREADS macros already assumed that no other thread's work is excluded.
  */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -647,7 +651,14 @@ static int module_clear(PyObject *module) {
 
 static void module_free(void *module) { (void)module_clear((PyObject *)module); }
 
-static PyModuleDef_Slot module_slots[] = {{Py_mod_exec, (void *)module_exec}, {0, NULL}};
+/* Py_mod_gil exists only in the full API of 3.13+, which is what free-threaded builds use (the limited-API build
+ * targets 3.11). Without the slot, importing the module on a free-threaded build would turn the GIL back on. */
+static PyModuleDef_Slot module_slots[] = {
+    {Py_mod_exec, (void *)module_exec},
+#if defined(Py_GIL_DISABLED) && defined(Py_mod_gil)
+    {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+#endif
+    {0, NULL}};
 
 static struct PyModuleDef module_def = {PyModuleDef_HEAD_INIT, "pyribbon._ribbon", "C core of pyribbon.", sizeof(ModState),
                                         NULL, module_slots, module_traverse, module_clear, module_free};
