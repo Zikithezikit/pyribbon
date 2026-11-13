@@ -5,7 +5,8 @@
 Ribbon filters for Python. A ribbon filter answers "is this key in the set?" for a fixed set of keys. It never says
 "no" for a key that is in the set. For a key that is not, it says "yes" with a probability you choose (`2**-fp_bits`).
 It needs fewer bits per key than a Bloom filter at the same false-positive rate. The core is C11, the Python layer is a
-thin extension, and there are no runtime dependencies.
+thin extension, and there are no runtime dependencies. The C core also builds on its own, without Python;
+[core/README.md](https://github.com/Zikithezikit/pyribbon/blob/main/core/README.md) explains how to use it.
 
 Build a filter from your keys with `RibbonFilter(keys)` and ask it with `key in f`. [examples/01_quickstart.py](https://github.com/Zikithezikit/pyribbon/blob/main/examples/01_quickstart.py)
 is the shortest complete program.

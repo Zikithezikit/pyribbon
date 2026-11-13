@@ -6,7 +6,8 @@ graft core/vendor
 graft core/tests
 graft core/tools
 graft core/fuzz
-include core/Makefile
+graft core/examples
+include core/Makefile core/README.md
 graft tests
 graft examples
 prune core/build
