@@ -9,7 +9,7 @@ LDLIBS := -lm
 HDRS   := include/ribbon.h src/rb_internal.h
 B      := build
 
-.PHONY: test example asan portable nomem coverage fuzz ovh-sweep fpr-report calibrate clean
+.PHONY: test example asan portable nomem coverage fuzz ovh-sweep fpr-report calibrate bench-build clean
 .DEFAULT_GOAL := test
 
 $(B):
@@ -90,6 +90,16 @@ $(B)/calibrate: tools/calibrate.c src/ribbon.c $(HDRS) | $(B)
 
 calibrate: $(B)/calibrate  ## regenerate the default-overhead table (slow: minutes)
 	./$(B)/calibrate 7 24
+
+$(B)/bench_build: tools/bench_build.c $(LIB) $(HDRS) | $(B)
+	$(CC) $(CFLAGS) -o $@ tools/bench_build.c $(LIB) $(LDLIBS)
+
+# Build throughput in ns per key. Pinned to CPU $(BENCH_CPU) when taskset exists. Absolute numbers depend on machine load;
+# compare two versions only with tools/ab_build.sh.
+BENCH_CPU ?= 2
+PIN := $(shell command -v taskset >/dev/null 2>&1 && echo taskset -c $(BENCH_CPU))
+bench-build: $(B)/bench_build  ## time rb_build for n = 1e3..1e7, r = 8 and 16
+	$(PIN) ./$(B)/bench_build $(BENCH_ARGS)
 
 clean:
 	rm -rf $(B)
