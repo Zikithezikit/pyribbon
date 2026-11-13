@@ -343,10 +343,12 @@ supported (the keys are hashed as they stream into the temporary array; a `__len
   builds run as a separate CI job on a plain runner, outside cibuildwheel. Verified in CI on 2026-11-12: the wheels build and pass the
   test suite on Linux x86-64 and ARM (manylinux_2_28 and musllinux_1_2), macOS Intel and Apple silicon, and Windows x64.
 * Releases: `release.yml` runs the full tests, builds the sdist and the wheels, and publishes to PyPI (secret
-  `PYPI_API_TOKEN`) and to GitHub releases when a `v*` tag is pushed. Only the `publish` job can publish, and it runs only for a
-  push event on a `v*` tag; a manual run is a dry run, even from a tag. `tests/test_release_workflow.py` enforces that and
-  checks that no other workflow can publish. Version 0.1.0 was released this way on 2026-11-12. That run uploaded everything to PyPI but failed to create the GitHub release, because the
-  publish job has no checkout and `gh release create` needed a git repository; the release step now passes `--repo`.
+  `PYPI_API_TOKEN`) and to GitHub releases when a `v*` tag is pushed. The jobs form a chain: tests and builds, then `check`, then
+  `publish` (the PyPI upload), then `github-release`, which is last. Each link needs the one before it to have succeeded, so a failure
+  anywhere releases nothing. Only `publish` and `github-release` can publish, and both run only for a push event on a `v*` tag; a
+  manual run is a dry run, even from a tag. `tests/test_release_workflow.py` enforces the chain and the guard and checks that no
+  other workflow can publish. Version 0.1.0 was released this way on 2026-11-12. That run uploaded everything to PyPI but failed to create the GitHub release, because the
+  publish job had no checkout and `gh release create` needed a git repository. The release is now its own final job and passes `--repo`.
 
 ## 9. Repository layout and `make` targets
 
