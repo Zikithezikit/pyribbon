@@ -3,7 +3,7 @@ BIN  := $(VENV)/bin
 PY   := $(BIN)/python
 
 .DEFAULT_GOAL := help
-.PHONY: help venv install-dev test pytest example c-test c-asan c-portable c-fuzz ovh-sweep fpr-report stats figures calibrate lint format docstyle typecheck check bench build clean
+.PHONY: help venv install-dev test pytest example c-test c-asan c-portable c-nomem coverage c-coverage ext-coverage c-fuzz ovh-sweep fpr-report stats figures calibrate lint format docstyle typecheck check bench build clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -31,6 +31,32 @@ c-asan:  ## C core tests under AddressSanitizer and UBSan
 
 c-portable:  ## C core tests with the portable bit-op fallbacks forced
 	$(MAKE) -C core portable
+
+c-nomem:  ## C core tests that fail each allocation in turn, under ASan and UBSan (Linux)
+	$(MAKE) -C core nomem
+
+# Coverage needs gcc and gcovr. The core is measured on its own; the extension is built with --coverage in a scratch
+# venv (build/cov-venv), so the dev install in $(VENV) is left alone. COV_MIN / EXT_COV_MIN are line percentages
+# below which the target fails (0 = report only).
+COVENV      := build/cov-venv
+COV_MIN     ?= 0
+EXT_COV_MIN ?= 0
+
+coverage: c-coverage ext-coverage  ## Line and branch coverage of the C core and of the CPython extension (gcc, gcovr)
+
+c-coverage:  ## Coverage of core/src from the C unit tests (COV_MIN=N fails below N percent)
+	$(MAKE) -C core coverage GCOVR=$(CURDIR)/$(COVENV)/bin/gcovr COV_MIN=$(COV_MIN)
+
+ext-coverage: $(COVENV)/bin/gcovr  ## Coverage of src/pyribbon/_ribbon.c from the Python tests (EXT_COV_MIN=N fails below N percent)
+	rm -rf build/cov-ext
+	CFLAGS="--coverage -O0 -g -fprofile-update=prefer-atomic" LDFLAGS="--coverage" $(COVENV)/bin/python setup.py -q build --build-base build/cov-ext
+	PYTHONPATH="$$(ls -d build/cov-ext/lib*)" $(COVENV)/bin/pytest -q -m "not slow" -p no:cacheprovider --deselect tests/test_filter.py::test_version_matches_installed_metadata tests
+	$(COVENV)/bin/gcovr --root . --filter src/pyribbon/_ribbon.c --txt-metric branch --txt --print-summary build/cov-ext
+	$(COVENV)/bin/gcovr --root . --filter src/pyribbon/_ribbon.c --txt-metric line --txt --print-summary --fail-under-line $(EXT_COV_MIN) build/cov-ext
+
+$(COVENV)/bin/gcovr:
+	python3 -m venv $(COVENV)
+	$(COVENV)/bin/pip install -q setuptools gcovr pytest hypothesis xxhash numpy pyyaml
 
 c-fuzz:  ## Fuzz the buffer loader (libFuzzer with clang, otherwise the built-in mutator)
 	$(MAKE) -C core fuzz
