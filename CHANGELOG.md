@@ -12,9 +12,7 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 - Project files: `SECURITY.md`, issue and pull request templates, Dependabot for Actions, pre-commit for ruff, `.editorconfig`.
 
-### Added
-- Documentation for the standalone C library (`core/README.md`), a runnable example (`core/examples/basic.c`, run by
-  `make -C core example` and in CI), and complete function comments in `ribbon.h`.
+- Documentation for the standalone C library (`core/README.md`), a runnable example (`core/examples/basic.c`, run by `make -C core example` and in CI), and complete function comments in `ribbon.h`.
 
 ## [0.1.0] - 2026-11-12
 
