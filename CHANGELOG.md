@@ -4,6 +4,9 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+- The test that a large build does not hold the GIL uses a lower threshold: it failed once on a loaded macOS Intel runner during
+  the 0.1.1 release, with a ticker at 17% of its free speed where a build that held the GIL would give about 0%.
+
 ## [0.1.1] - 2026-11-13
 
 ### Fixed
