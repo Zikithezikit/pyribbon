@@ -20,6 +20,9 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 - Free-threaded CPython (3.14t, 3.15t) is supported: wheels are built for it and importing the extension leaves the GIL off.
 
+### Added
+- `make coverage` (line and branch coverage of the C core and the extension with gcc and gcovr), allocation-failure and extension error-path tests, and a Coverage workflow with a line-coverage gate on the core.
+
 ## [0.1.0] - 2026-11-12
 
 First release.

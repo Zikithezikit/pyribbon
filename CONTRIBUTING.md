@@ -20,6 +20,27 @@ The C core (`core/`) builds and tests without Python, using `make c-test`, `make
 C code must compile with `-std=c11 -Wall -Wextra -Wconversion -Werror`. A change to the algorithm needs a citation to
 the Ribbon papers (see `RESEARCH.md`). Do not copy code from RocksDB, fastfilter_cpp, BuRR or other implementations.
 
+## Coverage
+
+```bash
+make coverage      # core and extension (a few minutes); needs gcc, installs gcovr into build/cov-venv
+make c-coverage    # only the C core
+make c-nomem       # the allocation-failure tests on their own (Linux, GNU ld)
+```
+
+`make c-coverage` builds the core unit tests twice with `gcc --coverage -O0` (default and `RB_PORTABLE=1`), builds
+`core/tests/test_nomem.c`, runs all three and prints line and branch coverage per file with gcovr. The allocation-failure
+tests link with `-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc` and fail the 0th, 1st, 2nd ... allocation of each core call;
+`make c-nomem` runs them under ASan and UBSan so a leak on an error path fails the run. No production source has a test hook.
+`make ext-coverage` builds `src/pyribbon/_ribbon.c` with coverage flags in a scratch venv (`build/cov-venv`, your dev install is
+not touched) and runs the Python tests against it. Its memory-failure tests run a child interpreter under `RLIMIT_AS` (Linux).
+
+The Coverage workflow (`.github/workflows/coverage.yml`) runs this on pushes to `main` and on pull requests, prints the tables in the
+job summary and fails when line coverage drops below `CORE_LINE_MIN` (the core) or `EXT_LINE_MIN` (the extension), both set in the
+`env:` block of that file. `make coverage COV_MIN=N EXT_COV_MIN=N` applies a gate locally. Code that cannot run in a test is left
+uncovered rather than hidden: the remaining branches are the 32-bit and big-endian code, the row-limit check when the table grows,
+and failures of tiny CPython allocations.
+
 ## Releasing
 
 1. Raise `version` in `pyproject.toml` and `__version__` in `src/pyribbon/__init__.py`, move the CHANGELOG entry from
