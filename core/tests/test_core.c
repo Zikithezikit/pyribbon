@@ -548,6 +548,65 @@ static void test_api_arguments(void) {
   free(h);
 }
 
+/* ---- the insertion order is an implementation detail: grouped by start row or in arrival order, same filter ---- */
+static void same_filter_in_every_mode(const uint64_t *h, size_t n, const rb_params *p, int bucket_a, int bucket_b) {
+  rb_filter *fa = NULL, *fb = NULL;
+  rb_build_info ia = {0, 0}, ib = {0, 0};
+  rb_status sa = rb_build_ex(h, n, p, bucket_a, &fa, &ia), sb = rb_build_ex(h, n, p, bucket_b, &fb, &ib);
+  CHECK_EQ(sa, sb);
+  CHECK((fa == NULL) == (fb == NULL));
+  if (!fa || !fb) { rb_free(fa); rb_free(fb); return; }
+  CHECK_EQ(ia.attempts, ib.attempts);
+  CHECK_EQ(ia.num_rows, ib.num_rows);
+  size_t sz = rb_serialized_size(fa);
+  CHECK_EQ(sz, rb_serialized_size(fb));
+  uint8_t *ba = (uint8_t *)malloc(sz), *bb = (uint8_t *)malloc(sz);
+  CHECK(rb_serialize(fa, ba, sz) == RB_OK && rb_serialize(fb, bb, sz) == RB_OK);
+  CHECK(memcmp(ba, bb, sz) == 0);
+  free(ba);
+  free(bb);
+  rb_free(fa);
+  rb_free(fb);
+}
+
+static void test_insertion_order_does_not_change_the_filter(void) {
+  static const size_t sizes[] = {1, 2, 63, 64, 65, 1000, 5000, 100000, 300000};
+  static const uint32_t bits[] = {1, 8, 13, 32};
+  for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++) {
+    uint64_t *h = make_hashes(sizes[si], 7, 1000);
+    for (size_t bi = 0; bi < sizeof bits / sizeof *bits; bi++) {
+      if (sizes[si] == 300000 && bi != 1) continue;
+      rb_params p = rb_params_default();
+      p.fp_bits = bits[bi];
+      p.seed = si;
+      same_filter_in_every_mode(h, sizes[si], &p, 0, 1);
+    }
+    free(h);
+  }
+  /* automatic choice (above 2^18 rows the bucketed path) against arrival order */
+  uint64_t *big = make_hashes(300000, 3, 0);
+  same_filter_in_every_mode(big, 300000, NULL, -1, 0);
+  free(big);
+  /* failures and retries with growth: tight overhead, one attempt and the default budget */
+  uint64_t *h = make_hashes(50000, 5, 0);
+  rb_params p = rb_params_default();
+  p.overhead = 0.0;
+  p.max_attempts = 1;
+  same_filter_in_every_mode(h, 50000, &p, 0, 1);
+  p.max_attempts = 0;
+  same_filter_in_every_mode(h, 50000, &p, 0, 1);
+  p.overhead = 0.02;
+  same_filter_in_every_mode(h, 50000, &p, 0, 1);
+  /* duplicate keys and keys in descending order */
+  uint64_t *d = (uint64_t *)malloc(60000 * sizeof *d);
+  for (size_t i = 0; i < 60000; i++) d[i] = h[(59999 - i) % 20000];
+  same_filter_in_every_mode(d, 60000, NULL, 0, 1);
+  free(d);
+  free(h);
+  /* n = 0 */
+  same_filter_in_every_mode(NULL, 0, NULL, 0, 1);
+}
+
 int main(void) {
   printf("pyribbon core tests (bit ops: %s)\n",
 #if defined(RB_GNU)
@@ -564,6 +623,7 @@ int main(void) {
   test_no_false_negatives();
   test_duplicates();
   test_failure_is_reported();
+  test_insertion_order_does_not_change_the_filter();
   test_param_validation();
   test_default_overhead();
   test_default_overhead_ppm_vectors();
