@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import sysconfig
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -89,8 +90,9 @@ def test_replacing_a_filter_while_other_threads_query_it() -> None:
     holder: dict[str, RibbonFilter] = {"f": RibbonFilter(members, seed=0)}
     stop = threading.Event()
     barrier = threading.Barrier(5)
+    progress = [0] * 5  # one slot per thread, written only by that thread
 
-    def reader() -> int:
+    def reader(i: int) -> int:
         barrier.wait()
         rounds = 0
         while not stop.is_set():
@@ -98,6 +100,7 @@ def test_replacing_a_filter_while_other_threads_query_it() -> None:
             assert all(f.contains_many(members))  # every filter in play contains all members
             assert all(m in f for m in members[:200])
             rounds += 1
+            progress[i] = rounds
         return rounds
 
     def replacer() -> int:
@@ -106,11 +109,16 @@ def test_replacing_a_filter_while_other_threads_query_it() -> None:
         while not stop.is_set():
             seed += 1
             holder["f"] = RibbonFilter(members, seed=seed)  # drops the previous filter while readers may be inside it
+            progress[4] = seed
         return seed
 
     with ThreadPoolExecutor(5) as pool:
-        futures = [pool.submit(reader) for _ in range(4)] + [pool.submit(replacer)]
-        time.sleep(2.0)
+        futures = [pool.submit(reader, i) for i in range(4)] + [pool.submit(replacer)]
+        # Run for at least 2 s and until every thread has finished a round: on a busy machine a thread can go that long
+        # without being scheduled, which says nothing about the library.
+        start = time.monotonic()
+        while time.monotonic() - start < 2.0 or (not all(progress) and time.monotonic() - start < 60.0):
+            time.sleep(0.05)
         stop.set()
         rounds = [f.result() for f in futures]
     assert all(r >= 1 for r in rounds), rounds
@@ -201,6 +209,9 @@ def test_contains_many_runs_in_parallel_because_it_releases_the_gil() -> None:
     assert parallel < 3.0 * single, f"4 threads took {parallel / single:.2f}x the single-thread time"
 
 
+@pytest.mark.skipif(
+    bool(sysconfig.get_config_var("Py_GIL_DISABLED")), reason="a free-threaded build has no GIL to hold"
+)
 def test_a_large_build_does_not_hold_the_gil() -> None:
     keys = list(range(3_000_000))
     ticks = 0

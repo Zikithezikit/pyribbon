@@ -85,8 +85,9 @@ def test_dropping_filters_that_other_threads_are_probing() -> None:
     slot: list[RibbonFilter] = [RibbonFilter.from_buffer(blob)]
     stop = threading.Event()
     barrier = threading.Barrier(THREADS)
+    progress = [0] * THREADS  # one slot per thread, written only by that thread
 
-    def reader() -> int:
+    def reader(i: int) -> int:
         barrier.wait()
         rounds = 0
         while not stop.is_set():
@@ -94,19 +95,26 @@ def test_dropping_filters_that_other_threads_are_probing() -> None:
             assert all(f.contains_many(members))
             assert all(m in f for m in members[:100])
             rounds += 1
+            progress[i] = rounds
         return rounds
 
-    def swapper() -> int:
+    def swapper(i: int) -> int:
         barrier.wait()
         swaps = 0
         while not stop.is_set():
             slot[0] = RibbonFilter.from_buffer(blob, verify=False)  # frees the previous filter, releases its view
             swaps += 1
+            progress[i] = swaps
         return swaps
 
     with ThreadPoolExecutor(THREADS) as pool:
-        futures = [pool.submit(reader) for _ in range(THREADS - 2)] + [pool.submit(swapper), pool.submit(swapper)]
-        time.sleep(DURATION)
+        futures = [pool.submit(reader, i) for i in range(THREADS - 2)]
+        futures += [pool.submit(swapper, i) for i in (THREADS - 2, THREADS - 1)]
+        # Run for DURATION and until every thread has finished a round: on a busy machine a thread can go that long
+        # without being scheduled, which says nothing about the library.
+        start = time.monotonic()
+        while time.monotonic() - start < DURATION or (not all(progress) and time.monotonic() - start < 60.0):
+            time.sleep(0.05)
         stop.set()
         counts = [f.result() for f in futures]
     assert all(c >= 1 for c in counts), counts
