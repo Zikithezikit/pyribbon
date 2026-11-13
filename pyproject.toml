@@ -77,7 +77,7 @@ files = ["src"]
 strict = true
 
 [tool.cibuildwheel]
-skip = "*-win32 *-manylinux_i686 *-musllinux_i686 *t-*"
+skip = "*-win32 *-manylinux_i686 *-musllinux_i686"
 test-requires = ["pytest", "hypothesis", "xxhash"]  # numpy interop tests skip when numpy is absent
 test-sources = ["tests"]
 test-command = "pytest -m \"not slow\" tests"  # double quotes: Windows cmd does not understand single quotes
