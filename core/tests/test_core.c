@@ -495,6 +495,59 @@ static void test_loader_hostile(void) {
   free(h);
 }
 
+/* ---- status strings: one distinct, non-empty text per status, and a fallback for a value outside the enum ---- */
+static void test_strerror(void) {
+  const char *seen[RB_E_CHECKSUM + 1];
+  for (int s = RB_OK; s <= RB_E_CHECKSUM; s++) {
+    seen[s] = rb_strerror((rb_status)s);
+    CHECK(strlen(seen[s]) > 0);
+    CHECK(strcmp(seen[s], "unknown status") != 0);
+    for (int t = RB_OK; t < s; t++) CHECK(strcmp(seen[s], seen[t]) != 0);
+  }
+  CHECK(strcmp(rb_strerror(RB_OK), "ok") == 0);
+  CHECK(strcmp(rb_strerror((rb_status)(RB_E_CHECKSUM + 1)), "unknown status") == 0);
+}
+
+/* ---- sizes beyond the supported range are refused before anything is allocated or read ---- */
+static void test_too_large(void) {
+#if SIZE_MAX > UINT32_MAX
+  uint64_t dummy = 0; /* never dereferenced: the checks come first */
+  rb_filter *f = (rb_filter *)0x1;
+  CHECK_EQ(rb_build(&dummy, (size_t)(RB_MAX_KEYS + 1u), NULL, &f, NULL), RB_E_TOO_LARGE);
+  CHECK(f == NULL);
+  rb_params p = rb_params_default();
+  p.overhead = 4.0; /* RB_MAX_KEYS keys at 5x the rows is 2^40.3 rows: over RB_MAX_ROWS */
+  f = (rb_filter *)0x1;
+  CHECK_EQ(rb_build(&dummy, (size_t)RB_MAX_KEYS, &p, &f, NULL), RB_E_TOO_LARGE);
+  CHECK(f == NULL);
+#endif
+}
+
+/* ---- null and undersized arguments of the serialization functions ---- */
+static void test_api_arguments(void) {
+  uint64_t *h = make_hashes(300, 0, 0);
+  rb_filter *f = NULL;
+  CHECK_EQ(rb_build(h, 300, NULL, &f, NULL), RB_OK);
+  size_t sz = rb_serialized_size(f);
+  uint8_t *buf = (uint8_t *)malloc(sz);
+  CHECK_EQ(rb_serialize(f, buf, sz), RB_OK);
+  CHECK_EQ(rb_serialize(f, NULL, sz), RB_E_INVALID_ARG);
+  CHECK_EQ(rb_serialize(f, buf, sz - 1), RB_E_INVALID_ARG);
+  CHECK_EQ(rb_serialize(f, buf, 0), RB_E_INVALID_ARG);
+  CHECK_EQ(rb_serialize(f, buf, sz + 100), RB_OK); /* a larger buffer is fine */
+  rb_filter *g = (rb_filter *)0x1;
+  CHECK_EQ(rb_from_buffer(buf, sz, 1, NULL), RB_E_INVALID_ARG);
+  CHECK_EQ(rb_from_buffer(NULL, sz, 1, &g), RB_E_INVALID_ARG);
+  CHECK(g == NULL);
+  CHECK_EQ(rb_from_buffer(NULL, 0, 1, &g), RB_E_TRUNCATED); /* too short is reported before the null pointer */
+  CHECK_EQ(rb_from_buffer(buf, sz, 0, &g), RB_OK);          /* verify_payload = 0 */
+  rb_free(g);
+  CHECK_EQ(rb_seed(f), 0u);
+  free(buf);
+  rb_free(f);
+  free(h);
+}
+
 int main(void) {
   printf("pyribbon core tests (bit ops: %s)\n",
 #if defined(RB_GNU)
@@ -518,6 +571,9 @@ int main(void) {
   test_fpr();
   test_roundtrip_and_view();
   test_loader_hostile();
+  test_strerror();
+  test_too_large();
+  test_api_arguments();
   printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed ? 1 : 0;
 }
