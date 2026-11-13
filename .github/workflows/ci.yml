@@ -30,6 +30,8 @@ jobs:
         run: make -C core portable
       - name: Unit tests under ASan + UBSan
         run: make -C core asan
+      - name: Build and run the C example
+        run: make -C core example
 
   fuzz:
     name: Loader fuzzing (libFuzzer, time-boxed)

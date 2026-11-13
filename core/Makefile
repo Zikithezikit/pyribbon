@@ -9,7 +9,7 @@ LDLIBS := -lm
 HDRS   := include/ribbon.h src/rb_internal.h
 B      := build
 
-.PHONY: test asan portable fuzz ovh-sweep fpr-report calibrate clean
+.PHONY: test example asan portable fuzz ovh-sweep fpr-report calibrate clean
 .DEFAULT_GOAL := test
 
 $(B):
@@ -21,9 +21,15 @@ $(B)/test_core: tests/test_core.c $(LIB) $(HDRS) tests/vectors.h | $(B)
 test: $(B)/test_core  ## build and run the unit tests
 	./$(B)/test_core
 
+$(B)/basic: examples/basic.c $(LIB) $(HDRS) | $(B)
+	$(CC) $(CFLAGS) $(EXTRA) -o $@ examples/basic.c $(LIB) $(LDLIBS)
+
+example: $(B)/basic  ## build and run examples/basic.c
+	./$(B)/basic
+
 asan: EXTRA := -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
 asan: OPT := -O1
-asan: clean test
+asan: clean test example
 
 portable: EXTRA := -DRB_PORTABLE=1
 portable: clean test
