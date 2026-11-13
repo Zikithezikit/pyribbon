@@ -1,0 +1,62 @@
+name: Cross-architecture
+
+# Runs the C core tests and the Python extension on a big-endian machine (s390x) and on two 32-bit machines (x86 and
+# armv7), in Debian containers. s390x and armv7 run under QEMU user-mode emulation; 32-bit x86 runs natively.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-arch:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: s390x (64-bit, big-endian)
+            platform: linux/s390x
+          - name: i386 (32-bit, little-endian)
+            platform: linux/386
+          - name: armv7 (32-bit, little-endian)
+            platform: linux/arm/v7
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4.0.0
+      - name: Build a Debian image with a compiler and the Python test dependencies
+        run: |
+          docker build --platform ${{ matrix.platform }} -t cross-arch -f - . <<'DOCKERFILE'
+          FROM debian:trixie
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                gcc libc6-dev make python3 python3-dev python3-venv python3-pip python3-setuptools \
+                python3-pytest python3-hypothesis python3-xxhash python3-numpy \
+              && rm -rf /var/lib/apt/lists/*
+          DOCKERFILE
+      - name: Show the machine (word size and byte order)
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} cross-arch sh -c '
+            python3 -c "import struct, sys; print(sys.byteorder, struct.calcsize(\"P\") * 8, \"bit pointers\")"
+            gcc -dumpmachine'
+      # The unit tests include byte-for-byte serialization vectors made by the independent Python reference, so a
+      # pass here shows the same bytes come out on this machine.
+      - name: C core unit tests
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} -v "$PWD:/src:ro" cross-arch sh -ec '
+            cp -r /src /work && cd /work
+            make -C core test
+            make -C core portable'
+      - name: Build the extension and run the Python tests
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} -v "$PWD:/src:ro" cross-arch sh -ec '
+            cp -r /src /work && cd /work
+            python3 -m venv --system-site-packages /tmp/venv
+            /tmp/venv/bin/pip install --no-build-isolation --no-deps .
+            /tmp/venv/bin/python -m pytest -m "not slow" -p no:cacheprovider \
+              tests/test_filter.py tests/test_loader.py tests/test_examples.py'
