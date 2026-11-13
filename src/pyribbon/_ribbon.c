@@ -224,8 +224,7 @@ static void hash_int_array(const unsigned char *data, size_t count, int size, in
     if (little_endian) {
       memcpy(&raw, data + i * (size_t)size, (size_t)size); /* any alignment */
     } else {
-      memcpy((unsigned char *)&raw + (8 - size), data + i * (size_t)size, (size_t)size); /* bytes land high: value is raw >> .. */
-      raw >>= 8 * (8 - size);
+      memcpy((unsigned char *)&raw + (8 - size), data + i * (size_t)size, (size_t)size); /* big-endian bytes land in the low end of raw: raw is the value */
     }
     if (is_signed) {
       out[i] = rb_hash_i64(sign_extend(raw, size), seed);
