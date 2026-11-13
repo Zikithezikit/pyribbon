@@ -65,8 +65,12 @@ def test_readme_fp_bits_table_matches_real_filters() -> None:
 
 
 def test_readme_images_exist() -> None:
-    """Every image in the README is an absolute raw-GitHub URL (so it renders on PyPI too) of a file in this repository."""
-    urls = [u for u in re.findall(r"!\[[^\]]*\]\((\S+?)\)", README.read_text()) if not u.endswith("/badge.svg")]
+    """Every figure in the README is an absolute raw-GitHub URL (so it renders on PyPI too) of a file in this repository.
+
+    Status badges (the CI badge and shields.io) are the only images that come from elsewhere.
+    """
+    images = re.findall(r"!\[[^\]]*\]\((\S+?)\)", README.read_text())
+    urls = [u for u in images if not u.endswith("/badge.svg") and not u.startswith("https://img.shields.io/")]
     prefix = "https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/"
     assert len(urls) >= 2
     for url in urls:

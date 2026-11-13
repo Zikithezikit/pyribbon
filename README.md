@@ -1,6 +1,9 @@
 # pyribbon
 
+[![PyPI](https://img.shields.io/pypi/v/pyribbon)](https://pypi.org/project/pyribbon/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pyribbon)](https://pypi.org/project/pyribbon/)
 [![CI](https://github.com/Zikithezikit/pyribbon/actions/workflows/ci.yml/badge.svg)](https://github.com/Zikithezikit/pyribbon/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/github/license/Zikithezikit/pyribbon)](https://github.com/Zikithezikit/pyribbon/blob/main/LICENSE)
 
 Ribbon filters for Python. A ribbon filter answers "is this key in the set?" for a fixed set of keys. It never says
 "no" for a key that is in the set. For a key that is not, it says "yes" with a probability you choose (`2**-fp_bits`).
@@ -22,9 +25,10 @@ Space, build time and lookup time against the number of keys, measured on one ma
 pip install pyribbon
 ```
 
-It needs Python 3.10 or newer. Wheels are published for Linux (x86-64 and ARM, glibc and musl), macOS (Intel and Apple
-silicon) and Windows (x64). On any other platform pip builds the source distribution, and a C compiler is the only build
-requirement. To install from a checkout instead, run `pip install .` in it.
+The package is on [PyPI](https://pypi.org/project/pyribbon/). It needs Python 3.10 or newer. Wheels are published for
+Linux (x86-64 and ARM, glibc and musl), macOS (Intel and Apple silicon) and Windows (x64), including the free-threaded
+builds of Python 3.14 and 3.15. On any other platform pip builds the source distribution, and a C compiler is the only
+build requirement. To install from a checkout instead, run `pip install .` in it.
 
 ## Examples
 
