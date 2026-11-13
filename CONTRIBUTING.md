@@ -27,3 +27,9 @@ The Release workflow then runs the full tests, builds the sdist and the wheels a
 `PYPI_API_TOKEN`, and only after the upload succeeded does a last, separate job create the GitHub release. A failure anywhere
 stops everything after it. If only the GitHub release fails, re-run just that job from the Actions page. A tag with a suffix such as `v0.2.0rc1` becomes a GitHub pre-release. A failed run can be repeated, because
 files already on PyPI are skipped. PyPI never accepts the same version twice, so a bad release needs a new version number.
+
+## When the pipeline runs
+
+Only three things start it: a push to `main`, a pull request into `main`, and a pushed `v*` tag (handled by `release.yml`, which calls
+the CI and wheel workflows first). Pushing to any other branch runs nothing until you open the pull request. A new workflow file must
+follow the same rule (`push: branches: [main]` and `pull_request: branches: [main]`); `tests/test_release_workflow.py` fails otherwise.

@@ -82,3 +82,21 @@ def test_macos_archs_are_not_pinned_while_two_runners_build_wheels() -> None:
             "cibuildwheel's default (auto) builds each runner's native arch"
         )
         assert "CIBW_ARCHS_MACOS" not in wheels_yml, "cibuildwheel's default (auto) builds each runner's native arch"
+
+
+@pytest.mark.parametrize("name", sorted(p.name for p in WORKFLOWS.glob("*.yml")) if WORKFLOWS.is_dir() else [])
+def test_pipelines_run_only_for_main_tags_and_pull_requests_to_main(name: str) -> None:
+    """Pushes to other branches do not start a pipeline; the pull request that targets main does. Tags are handled by
+    release.yml alone (it calls ci.yml and wheels.yml), so no other workflow may trigger on tags."""
+    triggers = load(name)["on"]
+    assert isinstance(triggers, dict)
+    assert "pull_request_target" not in triggers, "pull_request_target runs with secrets on untrusted code"
+    # a bare `push:` or `pull_request:` key parses to None: treat it as "no filter", which is what it means
+    if name == "release.yml":
+        assert triggers.get("push") == {"tags": ["v*"]}
+    elif "push" in triggers:
+        assert (triggers["push"] or {}) == {"branches": ["main"]}, f"{name}: push must be limited to main (never tags)"
+    if "pull_request" in triggers:
+        assert (triggers["pull_request"] or {}).get("branches") == ["main"], f"{name}: PRs must be limited to main"
+    if "schedule" in triggers:
+        assert name == "stats.yml", "only the statistics workflow is scheduled"

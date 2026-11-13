@@ -4,6 +4,9 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+- CI and wheel workflows now run only for pushes to `main`, tags (through `release.yml`) and pull requests that target `main`; a test
+  enforces this for every workflow.
+
 - The GitHub release is now its own last job in `release.yml`: it runs only after the PyPI upload succeeded, which itself needs the
   whole pipeline to have passed, and only for a pushed `v*` tag. A failed release can be re-run without touching PyPI.
 
