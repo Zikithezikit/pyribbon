@@ -29,24 +29,35 @@ def test_release_workflow_triggers_only_on_version_tags_and_manual_runs() -> Non
     assert triggers["push"] == {"tags": ["v*"]}, "no branch pushes, no pull requests"
 
 
-def test_only_the_publish_job_can_publish_and_it_is_guarded() -> None:
+GUARD = ("success()", "github.event_name == 'push'", "github.ref_type == 'tag'", "startsWith(github.ref_name, 'v')")
+
+
+def test_only_the_publish_and_release_jobs_can_publish_and_both_are_guarded() -> None:
     jobs = load("release.yml")["jobs"]
-    publishing = [name for name, job in jobs.items() if any(word in json.dumps(job) for word in PUBLISHING)]
-    assert publishing == ["publish"]
-    guard = jobs["publish"]["if"]
-    for condition in ("github.event_name == 'push'", "github.ref_type == 'tag'", "startsWith(github.ref_name, 'v')"):
-        assert condition in guard
-    assert jobs["publish"]["needs"] == ["check"], "publishing waits for the checks"
+    publishing = sorted(name for name, job in jobs.items() if any(word in json.dumps(job) for word in PUBLISHING))
+    assert publishing == ["github-release", "publish"]
+    for name in publishing:
+        for condition in GUARD:
+            assert condition in jobs[name]["if"], f"{name} must require {condition}"
+
+
+def test_nothing_is_released_unless_the_whole_pipeline_passed() -> None:
+    jobs = load("release.yml")["jobs"]
     assert set(jobs["check"]["needs"]) == {"ci", "wheels", "sdist"}, "the checks wait for tests and builds"
+    assert jobs["publish"]["needs"] == ["check"], "the upload waits for the checks"
+    assert jobs["github-release"]["needs"] == ["publish"], "the GitHub release is last and needs a successful upload"
 
 
-def test_the_token_is_never_exposed_outside_the_publish_job() -> None:
+def test_the_token_and_the_permissions_stay_in_their_own_jobs() -> None:
     jobs = load("release.yml")["jobs"]
     for name, job in jobs.items():
         if name != "publish":
             assert "secrets." not in json.dumps(job), f"job {name} must not see any secret"
     steps = [json.dumps(s) for s in jobs["publish"]["steps"] if "PYPI_API_TOKEN" in json.dumps(s)]
     assert len(steps) == 1 and "uv publish" in steps[0], "the token is used by exactly one step: the upload"
+    assert jobs["publish"]["permissions"] == {"id-token": "write", "attestations": "write"}
+    assert jobs["github-release"]["permissions"] == {"contents": "write"}
+    assert "gh release create" not in json.dumps(jobs["publish"]), "the release is not made in the upload job"
 
 
 @pytest.mark.parametrize("name", sorted(p.name for p in WORKFLOWS.glob("*.yml")) if WORKFLOWS.is_dir() else [])

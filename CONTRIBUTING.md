@@ -22,7 +22,8 @@ the Ribbon papers (see `RESEARCH.md`). Do not copy code from RocksDB, fastfilter
    checks everything and publishes nothing, even when started from a tag.
 3. Tag that commit and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
-The Release workflow then runs the full tests, builds the sdist and the wheels, checks that the tag equals the version in
-`pyproject.toml` and points at a commit on `main`, publishes to PyPI with the repository secret `PYPI_API_TOKEN`, and creates a
-GitHub release. A tag with a suffix such as `v0.2.0rc1` becomes a GitHub pre-release. A failed run can be repeated, because
+The Release workflow then runs the full tests, builds the sdist and the wheels and checks that the tag equals the version in
+`pyproject.toml` and points at a commit on `main`. Only if all of that passed does it publish to PyPI with the repository secret
+`PYPI_API_TOKEN`, and only after the upload succeeded does a last, separate job create the GitHub release. A failure anywhere
+stops everything after it. If only the GitHub release fails, re-run just that job from the Actions page. A tag with a suffix such as `v0.2.0rc1` becomes a GitHub pre-release. A failed run can be repeated, because
 files already on PyPI are skipped. PyPI never accepts the same version twice, so a bad release needs a new version number.

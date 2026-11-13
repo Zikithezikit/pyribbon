@@ -4,6 +4,9 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+- The GitHub release is now its own last job in `release.yml`: it runs only after the PyPI upload succeeded, which itself needs the
+  whole pipeline to have passed, and only for a pushed `v*` tag. A failed release can be re-run without touching PyPI.
+
 ## [0.1.0] - 2026-11-12
 
 First release.
