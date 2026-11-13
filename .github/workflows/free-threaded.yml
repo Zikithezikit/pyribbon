@@ -1,0 +1,37 @@
+name: Free-threaded
+
+# The fast tests on the free-threaded build of CPython, with the GIL forced off (PYTHON_GIL=0), so that a module that
+# switches the GIL back on fails loudly instead of hiding a race. Wheels for these builds come from wheels.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  free-threaded:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.14t"]
+    env:
+      PYTHON_GIL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Check that this is a free-threaded interpreter without the GIL
+        run: python -c "import sys, sysconfig; assert sysconfig.get_config_var('Py_GIL_DISABLED') == 1; assert not sys._is_gil_enabled()"
+      - name: Virtualenv and editable install
+        run: make venv install-dev
+      - name: Check that importing the extension leaves the GIL off
+        run: .venv/bin/python -W error -c "import sys, pyribbon; assert not sys._is_gil_enabled()"
+      - name: Tests (the statistical tests run in stats.yml)
+        run: make pytest ARGS="-m 'not slow'"
