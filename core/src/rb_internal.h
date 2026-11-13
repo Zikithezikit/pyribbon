@@ -125,6 +125,11 @@ typedef struct {
 /* Per-attempt salt: depends only on the attempt index, so it is computed once per build attempt / per filter. */
 static inline uint64_t rb_attempt_salt(uint32_t attempt) { return rb_mix64(((uint64_t)attempt + 1u) * RB_GAMMA); }
 
+/* Only the start row of rb_derive (one mix instead of three), for grouping keys before insertion. */
+static inline uint64_t rb_derive_start(uint64_t hash, uint64_t salt, uint64_t num_starts) {
+  return rb_mulhi64(rb_mix64((hash ^ salt) + RB_GAMMA), num_starts);
+}
+
 /* num_starts = num_rows - RB_WIDTH + 1; 1 <= r <= 32; salt = rb_attempt_salt(attempt). */
 static inline rb_eq rb_derive(uint64_t hash, uint64_t salt, uint64_t num_starts, uint32_t r) {
   uint64_t state = hash ^ salt;
@@ -140,5 +145,10 @@ static inline rb_eq rb_derive(uint64_t hash, uint64_t salt, uint64_t num_starts,
 
 /* XXH3-64 of a byte string (seed 0, default secret); used for key hashing and checksums. */
 uint64_t rb_xxh3_64(const void *data, size_t len);
+
+/* rb_build with the insertion order forced: bucket < 0 picks by table size (what rb_build does), 0 inserts keys in
+ * arrival order, > 0 groups them by start row first. The serialized filter is the same in every mode; tests compare them. */
+rb_status rb_build_ex(const uint64_t *key_hashes, size_t n, const rb_params *p, int bucket, rb_filter **out,
+                      rb_build_info *info);
 
 #endif /* RB_INTERNAL_H */

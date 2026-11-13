@@ -144,6 +144,57 @@ static int rb_band_insert(rb_slot *slots, uint64_t i, uint64_t c, uint32_t b) {
   }
 }
 
+/* Large tables are filled bucket by bucket. For a table whose slots do not fit in the caches, a key's slot is a random
+ * memory access and the build is bound by memory latency. The system's solution does not depend on the order in which the
+ * equations arrive (DESIGN.md section 4), so the keys are first grouped by start row (a counting sort on start >> shift,
+ * one extra 8-byte word per key) and then inserted bucket after bucket: the slots of one bucket stay in cache and the
+ * elimination walks memory in increasing order. Smaller tables keep the plain arrival-order loop. */
+#ifndef RB_BUCKET_MIN_ROWS
+#define RB_BUCKET_MIN_ROWS (UINT64_C(1) << 18)
+#endif
+#ifndef RB_BUCKET_MIN_SHIFT
+#define RB_BUCKET_MIN_SHIFT 12u /* at least 4096 rows (64 KiB of slots) per bucket */
+#endif
+#ifndef RB_BUCKET_MAX
+#define RB_BUCKET_MAX 1024u /* at most this many buckets: the scatter then keeps one open cache line per bucket in L1/L2 */
+#endif
+
+/* Insert every equation of `keys` in order; the chunked prefetch overlaps the cache misses of random slots. */
+static int rb_insert_keys(rb_slot *slots, const uint64_t *keys, size_t n, uint64_t salt, uint64_t num_starts, uint32_t r) {
+  for (size_t i = 0; i < n; i += RB_CHUNK) {
+    /* derive a chunk and prefetch its slots first: the random accesses then overlap instead of queueing. */
+    size_t cn = n - i < RB_CHUNK ? n - i : RB_CHUNK;
+    rb_eq eqs[RB_CHUNK];
+    for (size_t j = 0; j < cn; j++) {
+      eqs[j] = rb_derive(keys[i + j], salt, num_starts, r);
+      rb_prefetch(&slots[eqs[j].start]);
+    }
+    for (size_t j = 0; j < cn; j++)
+      if (!rb_band_insert(slots, eqs[j].start, eqs[j].coeff, eqs[j].fp)) return 0;
+  }
+  return 1;
+}
+
+/* Group `hashes` by bucket (start >> shift) into `sorted` (room for n words), then insert bucket by bucket. */
+static int rb_insert_bucketed(rb_slot *slots, const uint64_t *hashes, size_t n, uint64_t salt, uint64_t num_starts,
+                              uint32_t r, uint64_t *sorted) {
+  size_t counts[RB_BUCKET_MAX + 1u];
+  unsigned shift = RB_BUCKET_MIN_SHIFT;
+  while (((num_starts - 1u) >> shift) >= RB_BUCKET_MAX) shift++;
+  size_t nb = (size_t)((num_starts - 1u) >> shift) + 1u;
+  memset(counts, 0, (nb + 1u) * sizeof *counts);
+  for (size_t i = 0; i < n; i++) counts[(rb_derive_start(hashes[i], salt, num_starts) >> shift) + 1u]++;
+  for (size_t b = 0; b < nb; b++) counts[b + 1u] += counts[b];
+  for (size_t i = 0; i < n; i++) sorted[counts[rb_derive_start(hashes[i], salt, num_starts) >> shift]++] = hashes[i];
+  /* counts[b] is now the end of bucket b, i.e. the start of bucket b + 1 */
+  size_t lo = 0;
+  for (size_t b = 0; b < nb; b++) {
+    if (!rb_insert_keys(slots, sorted + lo, counts[b] - lo, salt, num_starts, r)) return 0;
+    lo = counts[b];
+  }
+  return 1;
+}
+
 /* Back-substitution into the interleaved layout [R p4, sec. 5.2]. st[j] holds, at bit k, the
  * solution bit of column j at row i + k; when i is a multiple of 64 it is exactly the word
  * for block i / 64, column j. Rows are processed from the last to the first. */
@@ -172,6 +223,11 @@ static rb_filter *rb_new_filter(void) {
 }
 
 rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb_filter **out, rb_build_info *info) {
+  return rb_build_ex(hashes, n, params, -1, out, info);
+}
+
+rb_status rb_build_ex(const uint64_t *hashes, size_t n, const rb_params *params, int bucket, rb_filter **out,
+                      rb_build_info *info) {
   if (!out) return RB_E_INVALID_ARG;
   *out = NULL;
   rb_params p = params ? *params : rb_params_default();
@@ -202,6 +258,7 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
   uint64_t rows;
   rb_status st = rb_initial_rows(n, overhead_ppm, &rows);
   rb_slot *slots = NULL;
+  uint64_t *sorted = NULL; /* keys grouped by start row, for large tables only */
   uint64_t alloc_rows = 0;
   for (uint32_t attempt = 0; st == RB_OK && attempt < p.max_attempts; attempt++) {
     if (attempt >= 2) { /* reseeding alone first; from the third attempt also grow the table */
@@ -219,19 +276,14 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
     }
     uint64_t num_starts = rows - RB_WIDTH + 1u;
     uint64_t salt = rb_attempt_salt(attempt);
-    int solvable = 1;
-    for (size_t i = 0; i < n && solvable; i += RB_CHUNK) {
-      /* derive a chunk and prefetch its slots first: the random accesses then overlap instead of queueing.
-       * Equations are still inserted in arrival order, so the result is identical to one-at-a-time insertion. */
-      size_t cn = n - i < RB_CHUNK ? n - i : RB_CHUNK;
-      rb_eq eqs[RB_CHUNK];
-      for (size_t j = 0; j < cn; j++) {
-        eqs[j] = rb_derive(hashes[i + j], salt, num_starts, p.fp_bits);
-        rb_prefetch(&slots[eqs[j].start]);
-      }
-      for (size_t j = 0; j < cn; j++)
-        if (!rb_band_insert(slots, eqs[j].start, eqs[j].coeff, eqs[j].fp)) { solvable = 0; break; }
+    int bucketed = bucket > 0 || (bucket < 0 && rows >= RB_BUCKET_MIN_ROWS);
+    if (bucketed && !sorted) {
+      if (n > SIZE_MAX / sizeof *sorted) { st = RB_E_TOO_LARGE; break; }
+      sorted = (uint64_t *)malloc(n * sizeof *sorted);
+      if (!sorted) { st = RB_E_NOMEM; break; }
     }
+    int solvable = bucketed ? rb_insert_bucketed(slots, hashes, n, salt, num_starts, p.fp_bits, sorted)
+                            : rb_insert_keys(slots, hashes, n, salt, num_starts, p.fp_bits);
     if (!solvable) continue; /* unsolvable: next attempt (st stays RB_OK; exhaustion is reported after the loop) */
 
     size_t payload_len = rb_payload_bytes(rows, p.fp_bits);
@@ -246,10 +298,12 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
     f->payload_xxh3 = rb_xxh3_64(payload, payload_len);
     if (info) { info->attempts = attempt + 1u; info->num_rows = rows; }
     free(slots);
+    free(sorted);
     *out = f;
     return RB_OK;
   }
   free(slots);
+  free(sorted);
   free(f);
   return st == RB_OK ? RB_E_CONSTRUCT : st;
 }
