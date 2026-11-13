@@ -180,7 +180,9 @@ rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb
   if (p.max_attempts > RB_MAX_ATTEMPTS) return RB_E_INVALID_ARG;
   if (p.overhead != p.overhead || p.overhead > 4.0) return RB_E_INVALID_ARG; /* NaN or absurd */
   if (n > 0 && !hashes) return RB_E_INVALID_ARG;
+#if SIZE_MAX > RB_MAX_KEYS /* on a 32-bit size_t the limit cannot be exceeded, and the comparison would not compile warning-free */
   if ((uint64_t)n > RB_MAX_KEYS) return RB_E_TOO_LARGE;
+#endif
 
   rb_filter *f = rb_new_filter();
   if (!f) return RB_E_NOMEM;
