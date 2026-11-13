@@ -1,0 +1,49 @@
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Minimum line coverage, in percent, of core/src (the C unit tests plus the allocation-failure tests).
+  # To change the gate, edit this number; `make coverage COV_MIN=N` applies the same gate locally.
+  CORE_LINE_MIN: "97"
+  # The same for src/pyribbon/_ribbon.c, measured while the Python tests run.
+  EXT_LINE_MIN: "92"
+
+jobs:
+  coverage:
+    name: C core and extension coverage (gcc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: C core
+        run: |
+          set -o pipefail
+          make c-coverage COV_MIN="$CORE_LINE_MIN" 2>&1 | tee core-coverage.log
+      - name: Extension
+        run: |
+          set -o pipefail
+          make ext-coverage EXT_COV_MIN="$EXT_LINE_MIN" 2>&1 | tee ext-coverage.log
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## C core coverage (line gate: ${CORE_LINE_MIN}%)"
+            echo '```'
+            sed -n '/^File .*Branches/,$p' core-coverage.log
+            echo '```'
+            echo "## Extension coverage (line gate: ${EXT_LINE_MIN}%)"
+            echo '```'
+            sed -n '/^File .*Branches/,$p' ext-coverage.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
