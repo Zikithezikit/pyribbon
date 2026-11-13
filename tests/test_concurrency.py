@@ -233,6 +233,7 @@ def test_a_large_build_does_not_hold_the_gil() -> None:
     thread.join()
     assert all(f.contains_many(keys[::1000]))
     # While the build runs the other thread must keep going: banding and back-substitution (most of the build) run
-    # without the GIL. If the whole build held it, `during` would be about 0 and the gap about the whole duration.
-    assert during > 0.2 * alone * duration, f"ticker ran {during / (alone * duration):.2f} of its free speed"
+    # without the GIL. If the whole build held it, `during` would be about 0 and the gap about the whole duration. The
+    # threshold is low because a shared CI runner can take most of the CPU for a while (0.17 was seen on macOS Intel).
+    assert during > 0.05 * alone * duration, f"ticker ran {during / (alone * duration):.2f} of its free speed"
     assert longest_gap < 0.7 * duration, f"ticker stalled {longest_gap:.2f}s of a {duration:.2f}s build"
