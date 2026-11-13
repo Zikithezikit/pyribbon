@@ -10,10 +10,7 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 - The GitHub release is now its own last job in `release.yml`: it runs only after the PyPI upload succeeded, which itself needs the
   whole pipeline to have passed, and only for a pushed `v*` tag. A failed release can be re-run without touching PyPI.
 
-### Added
-- `SECURITY.md` (supported versions, private reporting, scope), pull request and issue templates, a Dependabot
-  configuration for GitHub Actions, a pre-commit configuration for ruff, `.editorconfig`, and `Source` and `Security`
-  project URLs.
+- Project files: `SECURITY.md`, issue and pull request templates, Dependabot for Actions, pre-commit for ruff, `.editorconfig`.
 
 ## [0.1.0] - 2026-11-12
 
