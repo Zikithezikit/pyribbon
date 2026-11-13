@@ -9,7 +9,7 @@ LDLIBS := -lm
 HDRS   := include/ribbon.h src/rb_internal.h
 B      := build
 
-.PHONY: test example asan portable fuzz ovh-sweep fpr-report calibrate clean
+.PHONY: test example asan portable nomem coverage fuzz ovh-sweep fpr-report calibrate clean
 .DEFAULT_GOAL := test
 
 $(B):
@@ -33,6 +33,31 @@ asan: clean test example
 
 portable: EXTRA := -DRB_PORTABLE=1
 portable: clean test
+
+# Allocation-failure tests: tests/test_nomem.c fails the Nth malloc/calloc/realloc by linking with GNU ld's --wrap (Linux).
+# Under ASan/UBSan, so a leak or an invalid free on any error path fails the run.
+NOMEM_LD := -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+$(B)/test_nomem: tests/test_nomem.c $(LIB) $(HDRS) | $(B)
+	$(CC) $(CFLAGS) -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer $(NOMEM_LD) -o $@ tests/test_nomem.c $(LIB) $(LDLIBS)
+
+nomem: $(B)/test_nomem  ## build and run the allocation-failure tests (Linux, GNU ld)
+	./$(B)/test_nomem
+
+# Line and branch coverage of src/ with gcov, reported by gcovr (pip install gcovr). Three builds at -O0 with --coverage:
+# the unit tests, the same with the portable bit-op fallbacks, and the allocation-failure tests; gcovr merges them.
+# COV_MIN=N makes the target fail when total line coverage is below N percent.
+GCOVR   ?= gcovr
+COV_MIN ?= 0
+CB      := $(B)/cov
+COVFLAGS = $(CFLAGS) -O0 --coverage
+coverage:
+	rm -rf $(CB) && mkdir -p $(CB)/default $(CB)/portable $(CB)/nomem
+	$(CC) $(COVFLAGS) -o $(CB)/default/test_core tests/test_core.c $(LIB) $(LDLIBS)
+	$(CC) $(COVFLAGS) -DRB_PORTABLE=1 -o $(CB)/portable/test_core tests/test_core.c $(LIB) $(LDLIBS)
+	$(CC) $(COVFLAGS) $(NOMEM_LD) -o $(CB)/nomem/test_nomem tests/test_nomem.c $(LIB) $(LDLIBS)
+	./$(CB)/default/test_core && ./$(CB)/portable/test_core && ./$(CB)/nomem/test_nomem
+	$(GCOVR) --root . --filter 'src/' --txt-metric branch --txt --print-summary $(CB)
+	$(GCOVR) --root . --filter 'src/' --txt-metric line --txt --print-summary --fail-under-line $(COV_MIN) $(CB)
 
 # Loader fuzzing. With clang this builds a libFuzzer binary; otherwise the built-in mutation driver
 # (same harness, deterministic PRNG, under ASan/UBSan) runs for a fixed number of iterations.
