@@ -44,7 +44,7 @@ EXT_COV_MIN ?= 0
 
 coverage: c-coverage ext-coverage  ## Line and branch coverage of the C core and of the CPython extension (gcc, gcovr)
 
-c-coverage:  ## Coverage of core/src from the C unit tests (COV_MIN=N fails below N percent)
+c-coverage: $(COVENV)/bin/gcovr  ## Coverage of core/src from the C unit tests (COV_MIN=N fails below N percent)
 	$(MAKE) -C core coverage GCOVR=$(CURDIR)/$(COVENV)/bin/gcovr COV_MIN=$(COV_MIN)
 
 ext-coverage: $(COVENV)/bin/gcovr  ## Coverage of src/pyribbon/_ribbon.c from the Python tests (EXT_COV_MIN=N fails below N percent)
