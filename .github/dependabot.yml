@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # The workflows pin actions to major tags. The Python dev tools in pyproject.toml are unpinned
+  # ranges and there is no lock file, so there is nothing for a pip ecosystem entry to update.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
