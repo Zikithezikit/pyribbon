@@ -40,10 +40,10 @@ jobs:
           {
             echo "## C core coverage (line gate: ${CORE_LINE_MIN}%)"
             echo '```'
-            sed -n '/^File .*Branches/,$p' core-coverage.log
+            { sed -n '/^File .*Branches/,$p' core-coverage.log || true; }
             echo '```'
             echo "## Extension coverage (line gate: ${EXT_LINE_MIN}%)"
             echo '```'
-            sed -n '/^File .*Branches/,$p' ext-coverage.log
+            { sed -n '/^File .*Branches/,$p' ext-coverage.log || true; }
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
