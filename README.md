@@ -216,7 +216,9 @@ Python (`make -C core test`).
 * Hashes are 64-bit, so two distinct keys with the same hash are indistinguishable (probability about `n**2 / 2**65`).
 * The timings here were measured on one Linux x86-64 machine. CI builds wheels and runs the tests on Linux (x86-64 and
   ARM, manylinux and musllinux), macOS (Intel and Apple silicon) and Windows (MSVC, x64) for Python 3.10 and newer.
-  Nothing has been run on 32-bit or big-endian machines, and wheels for the free-threaded build of CPython are not built.
+  The C core tests and the fast Python tests also run on s390x (64-bit, big-endian), 32-bit x86 and armv7 in Debian
+  containers (s390x and armv7 under QEMU emulation, so those runs say nothing about speed). Wheels for the free-threaded
+  build of CPython are not built.
 
 ## Development
 

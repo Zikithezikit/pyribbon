@@ -14,6 +14,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 - Documentation for the standalone C library (`core/README.md`), a runnable example (`core/examples/basic.c`, run by `make -C core example` and in CI), and complete function comments in `ribbon.h`.
 
+- A cross-architecture workflow runs the C core tests and the fast Python tests on s390x (big-endian), 32-bit x86 and armv7.
+
 - Fixed: on big-endian machines (found on s390x), a 1-, 2- or 4-byte integer buffer such as `array('i')` hashed to a different filter than the same ints; buffers of 8-byte items were unaffected.
 
 ## [0.1.0] - 2026-11-12

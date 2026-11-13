@@ -417,7 +417,7 @@ contents: read`.
 3. BuRR (0.06-1.4% overhead, but bucket sort, rollback, per-bucket thresholds and 4-layer recursion) and Balanced.
 4. SIMD queries (AVX512 POPCNT / 8-bit interleaving), parallel build (bump `w` positions per
    block to cut the system into independent blocks, R§7).
-5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor (also enables isolated subinterpreters); 32-bit and big-endian CI; `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
+5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor (also enables isolated subinterpreters); `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
 6. Cache effect of sorted vs random insertion for standard ribbon (not measured in the papers, R§4).
 
 ## 14. Risks and open questions
@@ -427,7 +427,15 @@ contents: read`.
 * XXH3 is vendored from a 7.5k-line header. Its stability promise and test vectors are taken on trust, and the header has not been audited.
 * Build memory: the banding array takes 16 bytes/slot (about 18 bytes/key at the w=64 overhead) plus 8 bytes/key for `H`,
   roughly 26 bytes/key, about 2.6 GB at `n = 1e8`, until sharding exists.
-* Never built or run: 32-bit and big-endian machines, Windows ARM, and free-threaded CPython. The local machine has no clang, so
+* Cross-architecture CI (`cross-arch.yml`): the C core tests, the portable-fallback build and the fast Python tests run on
+  s390x (big-endian), 32-bit x86 and armv7. The core tests include byte-for-byte serialization vectors made by the Python
+  reference, so a pass means the same bytes come out on every machine. The first runs found three things, all fixed: a
+  warning-free build needed the `RB_MAX_KEYS` check skipped where `size_t` cannot reach it; a test passed a length hint above
+  `sys.maxsize`, which `len()` rejects with `OverflowError` on 32-bit; and on big-endian hosts the integer-buffer fast path
+  shifted the loaded value away, so `array('i')` and other 1-, 2- and 4-byte buffers hashed to a different filter than the
+  same ints (8-byte buffers were unaffected). Release 0.1.0 has the last bug in its source for big-endian builds. Not covered:
+  big-endian or 32-bit wheels (none are published), the slow tests, and speed under emulation.
+* Never built or run: Windows ARM and free-threaded CPython. The local machine has no clang, so
   the libFuzzer build is exercised only in CI; the built-in mutator runs the same harness locally. Windows, macOS, the
   manylinux/musllinux wheels and cibuildwheel itself were first exercised by the CI runs on 2026-11-12, which found and
   fixed four problems (see the commit history).
