@@ -7,6 +7,12 @@ make check         # lint, docstyle, mypy + stubtest, C tests, Python tests
 make example       # run every script in examples/ (a test also runs them)
 ```
 
+To run the lint and format checks before every commit, install the hooks once with `pip install pre-commit && pre-commit install`.
+They run `ruff check` and `ruff format` with the settings in `pyproject.toml`, and `.editorconfig` sets the indentation
+(4 spaces in Python, 2 in C, YAML and TOML, tabs in Makefiles). Open a pull request from a branch; the template lists what to
+check. Bugs and feature requests have issue templates. Vulnerabilities do not go in issues: see `SECURITY.md`. Dependabot
+sends weekly updates for the GitHub Actions the workflows use.
+
 New examples go in `examples/` with the next number (`08_...py`) and a docstring that says how to run it. `tests/test_examples.py`
 runs each script, and `tests/test_readme.py` checks that the README lists it.
 
