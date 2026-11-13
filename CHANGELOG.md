@@ -4,7 +4,9 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
-First development version (0.1.0, not published).
+## [0.1.0] - 2026-11-12
+
+First release.
 
 ### Added
 - `RibbonFilter`: an immutable standard ribbon filter (width 64, `fp_bits` 1 to 32), built from an iterable of

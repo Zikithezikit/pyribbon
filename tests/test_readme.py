@@ -17,13 +17,17 @@ pytestmark = pytest.mark.skipif(not README.exists(), reason="README.md is not sh
 
 
 def test_readme_links_every_example_and_only_real_ones() -> None:
-    """The examples live in examples/, not in the README: each script is listed there, and each link points at a file."""
+    """The examples live in examples/, not in the README: each script is listed there, with an absolute link (so it also
+    works on the PyPI page), and each link points at a file."""
     text = README.read_text()
-    linked = set(re.findall(r"\]\((examples/[\w./-]+\.py)\)", text))
+    prefix = "https://github.com/Zikithezikit/pyribbon/blob/main/"
+    linked = set(re.findall(r"\]\(" + re.escape(prefix) + r"(examples/[\w./-]+\.py)\)", text))
     on_disk = {f"examples/{p.name}" for p in (ROOT / "examples").glob("*.py")}
     assert on_disk, "examples/ has no scripts"
     assert linked == on_disk, f"README and examples/ disagree: {sorted(linked ^ on_disk)}"
     assert "```python" not in text, "put code in examples/ and link to it"
+    relative = re.findall(r"\]\((?!https?://|#)([^)]+)\)", text)
+    assert not relative, f"relative links break on the PyPI page; use absolute URLs: {relative}"
 
 
 def _update_readme():  # type: ignore[no-untyped-def]

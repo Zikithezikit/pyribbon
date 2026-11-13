@@ -345,7 +345,8 @@ supported (the keys are hashed as they stream into the temporary array; a `__len
 * Releases: `release.yml` runs the full tests, builds the sdist and the wheels, and publishes to PyPI (secret
   `PYPI_API_TOKEN`) and to GitHub releases when a `v*` tag is pushed. Only the `publish` job can publish, and it runs only for a
   push event on a `v*` tag; a manual run is a dry run, even from a tag. `tests/test_release_workflow.py` enforces that and
-  checks that no other workflow can publish. No tag has been pushed and nothing is on PyPI.
+  checks that no other workflow can publish. Version 0.1.0 was released this way on 2026-11-12. That run uploaded everything to PyPI but failed to create the GitHub release, because the
+  publish job has no checkout and `gh release create` needed a git repository; the release step now passes `--repo`.
 
 ## 9. Repository layout and `make` targets
 
