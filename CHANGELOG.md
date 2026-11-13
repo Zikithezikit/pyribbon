@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 - Two concurrency tests failed on busy macOS runners for the free-threaded build. The GIL test is now skipped there, since that build has no GIL, and the two stress tests wait until every thread has finished a round instead of judging by a fixed sleep.
 
+- The README links the PyPI page and shows PyPI, Python-version and licence badges, and the package metadata now carries the free-threading classifier. The classifier reaches the PyPI page with the next release.
+
 - The test that a large build does not hold the GIL uses a lower threshold: it failed once on a loaded macOS Intel runner during
   the 0.1.1 release, with a ticker at 17% of its free speed where a build that held the GIL would give about 0%.
 
