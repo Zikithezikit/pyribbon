@@ -39,3 +39,7 @@ files already on PyPI are skipped. PyPI never accepts the same version twice, so
 Only three things start it: a push to `main`, a pull request into `main`, and a pushed `v*` tag (handled by `release.yml`, which calls
 the CI and wheel workflows first). Pushing to any other branch runs nothing until you open the pull request. A new workflow file must
 follow the same rule (`push: branches: [main]` and `pull_request: branches: [main]`); `tests/test_release_workflow.py` fails otherwise.
+
+`cross-arch.yml` (C core and Python tests on s390x, 32-bit x86 and armv7) follows the same rule. Its s390x and armv7 jobs run under
+QEMU and take a few minutes; it also has a manual `workflow_dispatch` trigger, which is how a branch whose pull request does not
+target `main` can be tested: `gh workflow run cross-arch.yml --ref <branch>`.
