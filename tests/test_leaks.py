@@ -14,6 +14,7 @@ import mmap
 import os
 import pickle
 import sys
+import sysconfig
 import weakref
 from collections.abc import Callable
 from pathlib import Path
@@ -273,6 +274,10 @@ def test_index_objects_are_released() -> None:
     assert sys.getrefcount(idx) == base
 
 
+@pytest.mark.skipif(
+    bool(sysconfig.get_config_var("Py_GIL_DISABLED")),
+    reason="free-threaded CPython keeps heap types on deferred reference counting: getrefcount is not stable for them",
+)
 def test_type_and_exception_refcounts_are_stable() -> None:
     def churn() -> None:
         for i in range(200):
