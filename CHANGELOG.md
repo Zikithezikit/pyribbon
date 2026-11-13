@@ -4,25 +4,32 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
-- CI and wheel workflows now run only for pushes to `main`, tags (through `release.yml`) and pull requests that target `main`; a test
-  enforces this for every workflow.
+## [0.1.1] - 2026-11-13
 
-- The GitHub release is now its own last job in `release.yml`: it runs only after the PyPI upload succeeded, which itself needs the
-  whole pipeline to have passed, and only for a pushed `v*` tag. A failed release can be re-run without touching PyPI.
+### Fixed
+- On big-endian machines (found on s390x), a 1-, 2- or 4-byte integer buffer such as `array('i')` hashed to a different
+  filter than the same ints. Buffers of 8-byte items were unaffected, and so was every little-endian machine.
 
-- Project files: `SECURITY.md`, issue and pull request templates, Dependabot for Actions, pre-commit for ruff, `.editorconfig`.
+### Added
+- Wheels for the free-threaded builds of CPython (3.14t and 3.15t). The extension declares that it does not need the GIL, so
+  importing it no longer turns the GIL back on.
+- Documentation for the standalone C library (`core/README.md`), a runnable example (`core/examples/basic.c`, run by
+  `make -C core example` and in CI), and complete function comments in `ribbon.h`.
+- `SECURITY.md`, issue and pull request templates, Dependabot for GitHub Actions, a pre-commit configuration for ruff and
+  `.editorconfig`.
 
-- Documentation for the standalone C library (`core/README.md`), a runnable example (`core/examples/basic.c`, run by `make -C core example` and in CI), and complete function comments in `ribbon.h`.
+### Changed
+- Building a filter of 1e6 keys or more is about 15 to 25% faster. Keys are grouped by start row before insertion, and the
+  output is byte-identical.
 
+### Project and CI
 - A cross-architecture workflow runs the C core tests and the fast Python tests on s390x (big-endian), 32-bit x86 and armv7.
-
-- Fixed: on big-endian machines (found on s390x), a 1-, 2- or 4-byte integer buffer such as `array('i')` hashed to a different filter than the same ints; buffers of 8-byte items were unaffected.
-
-- Free-threaded CPython (3.14t, 3.15t) is supported: wheels are built for it and importing the extension leaves the GIL off.
-
-- `make coverage` (line and branch coverage of the C core and the extension with gcc and gcovr), allocation-failure and extension error-path tests, and a Coverage workflow with a line-coverage gate on the core.
-
-- Building a filter of 1e6 keys or more is about 15 to 25% faster: keys are grouped by start row before insertion, with byte-identical output.
+- `make coverage` (line and branch coverage of the C core and the extension with gcc and gcovr), allocation-failure and
+  extension error-path tests, and a Coverage workflow with a line-coverage gate on the core.
+- CI and wheel workflows run only for pushes to `main`, tags (through `release.yml`) and pull requests that target `main`; a
+  test enforces this for every workflow.
+- The GitHub release is its own last job in `release.yml`: it runs only after the PyPI upload succeeded, which itself needs the
+  whole pipeline to have passed, and only for a pushed `v*` tag. A failed release can be re-run without touching PyPI.
 
 ## [0.1.0] - 2026-11-12
 
