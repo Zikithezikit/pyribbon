@@ -103,7 +103,8 @@ filter. Bad serialized data raises `FormatError`. Both are subclasses of `Ribbon
 ### Threads
 
 A filter is immutable, so any number of threads can query the same filter at once. Builds and large batches release the
-GIL. `pickle` and `copy` work. Wheels for the free-threaded build of CPython are not built yet. [examples/07_threads.py](https://github.com/Zikithezikit/pyribbon/blob/main/examples/07_threads.py) queries one
+GIL. `pickle` and `copy` work. The free-threaded builds of CPython (3.14t and 3.15t) have their own wheels, and importing
+the extension there leaves the GIL off. [examples/07_threads.py](https://github.com/Zikithezikit/pyribbon/blob/main/examples/07_threads.py) queries one
 filter from eight threads.
 
 
@@ -217,8 +218,8 @@ Python (`make -C core test`).
 * The timings here were measured on one Linux x86-64 machine. CI builds wheels and runs the tests on Linux (x86-64 and
   ARM, manylinux and musllinux), macOS (Intel and Apple silicon) and Windows (MSVC, x64) for Python 3.10 and newer.
   The C core tests and the fast Python tests also run on s390x (64-bit, big-endian), 32-bit x86 and armv7 in Debian
-  containers (s390x and armv7 under QEMU emulation, so those runs say nothing about speed). Wheels for the free-threaded
-  build of CPython are not built.
+  containers (s390x and armv7 under QEMU emulation, so those runs say nothing about speed). CI also runs the fast tests on
+  free-threaded 3.14t with the GIL forced off.
 
 ## Development
 

@@ -18,6 +18,12 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 - Fixed: on big-endian machines (found on s390x), a 1-, 2- or 4-byte integer buffer such as `array('i')` hashed to a different filter than the same ints; buffers of 8-byte items were unaffected.
 
+### Added
+- Wheels for the free-threaded builds of CPython (3.14t and 3.15t). The extension declares that it does not need the
+  GIL, so importing it no longer turns the GIL back on.
+- `tests/test_free_threaded.py`, a many-thread stress test, and a CI job that runs the fast tests on 3.14t with
+  `PYTHON_GIL=0`.
+
 ## [0.1.0] - 2026-11-12
 
 First release.

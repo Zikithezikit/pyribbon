@@ -45,7 +45,7 @@ That is not worth it for v0.1. w = 128 and hard sharding lead the roadmap, and t
 adding them is not a format break. Caveat for the README: the space advantage over Fuse is single-digit percent at large n.
 
 Deferred to the roadmap (§13): BuRR, Balanced, homogeneous, w = 128, sharding, SIMD, parallel build, fractional r,
-smash, free-threaded wheels.
+smash.
 
 ## 2. Parameters
 
@@ -242,8 +242,19 @@ and 3.14t); scikit-build-core is the runner-up if CMake is ever wanted.
   source (about 10 lines of conditional logic in `setup.py`). 3.10 reached end of life on 2026-10-01, but it is kept (decided
   2026-11-12) after checking pypistats (past month): 3.10 is still 12.8% of numpy's downloads and 16.7% of cryptography's.
   The cost is one extra wheel per platform; dropping it later removes that wheel and the conditional.
-* Free-threaded (3.14t) has no abi3, and `Py_MOD_GIL_NOT_USED` is not declared before testing: v0.1 skips
-  `*t-*` wheels, so a free-threaded interpreter builds from the sdist and re-enables the GIL on import. Roadmap item.
+* Free-threaded (3.14t, 3.15t) has no abi3 before 3.15, so `setup.py` builds the full API there and the wheels are
+  `cp314-cp314t` and `cp315-cp315t`. The module declares `Py_mod_gil = Py_MOD_GIL_NOT_USED`, only under
+  `#if defined(Py_GIL_DISABLED) && defined(Py_mod_gil)` (the slot is not in the 3.11 limited API, and is not needed
+  where there is a GIL). Without it, importing the extension would switch the GIL back on. Audit of `_ribbon.c` without
+  the GIL: a `FilterObject` is written only in `Filter_new` and `Filter_from_buffer` (before the object is returned) and
+  in `tp_clear`/`tp_dealloc`, which run only when no other reference exists; every method reads `filter` and nothing
+  else, and holds a reference to `self` for the whole call, also across the `ALLOW_THREADS` regions. Module state is
+  written only in `module_exec` and `module_clear`. The key and `Py_buffer` handling uses only public APIs that
+  CPython makes safe for free threading (`PyIter_Next`, `PyObject_GetBuffer`, `PyUnicode_AsUTF8AndSize`); a
+  `HashVec` belongs to one call. The one race left is the documented one: writing to a buffer a filter views.
+  No change to the C code was needed. Tested on 3.14t and 3.15t (`tests/test_free_threaded.py`, CI job
+  `free-threaded.yml`). The suite's one `sys.getrefcount` test on the types is skipped there, because heap types use
+  deferred reference counts.
 * GIL. Single-key `__contains__` never releases the GIL (the save/restore costs more than the ~30 ns of work, R§12).
   `build` hashes keys with the GIL held (it touches Python objects; the integer-buffer path below hashes without it), then releases the GIL for banding and back
   substitution (pure C, can take seconds). `contains_many` hashes into a temporary array with the GIL held and
@@ -417,7 +428,7 @@ contents: read`.
 3. BuRR (0.06-1.4% overhead, but bucket sort, rollback, per-bucket thresholds and 4-layer recursion) and Balanced.
 4. SIMD queries (AVX512 POPCNT / 8-bit interleaving), parallel build (bump `w` positions per
    block to cut the system into independent blocks, R§7).
-5. Free-threaded wheels and testing (3.14t, 3.15t); abi3t once 3.15 is the floor (also enables isolated subinterpreters); `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
+5. abi3t once 3.15 is the floor (also enables isolated subinterpreters); `bytearray`-safe loading; `memoryview(filter)` zero-copy export.
 6. Cache effect of sorted vs random insertion for standard ribbon (not measured in the papers, R§4).
 
 ## 14. Risks and open questions
@@ -435,7 +446,7 @@ contents: read`.
   shifted the loaded value away, so `array('i')` and other 1-, 2- and 4-byte buffers hashed to a different filter than the
   same ints (8-byte buffers were unaffected). Release 0.1.0 has the last bug in its source for big-endian builds. Not covered:
   big-endian or 32-bit wheels (none are published), the slow tests, and speed under emulation.
-* Never built or run: Windows ARM and free-threaded CPython. The local machine has no clang, so
+* Never built or run: Windows ARM, and free-threaded CPython by hand on anything but Linux x86-64 (only CI has built those wheels). The local machine has no clang, so
   the libFuzzer build is exercised only in CI; the built-in mutator runs the same harness locally. Windows, macOS, the
   manylinux/musllinux wheels and cibuildwheel itself were first exercised by the CI runs on 2026-11-12, which found and
   fixed four problems (see the commit history).
