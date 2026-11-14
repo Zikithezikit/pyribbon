@@ -60,18 +60,18 @@ def test_benchmark_blocks_match_the_generated_results() -> None:
     assert mod.read_block(page, "bench-by-size") == by_size, f"docs/performance.md {stale}"
 
 
-def test_readme_fp_bits_table_matches_real_filters() -> None:
+@pytest.mark.parametrize("page", [README, ROOT / "docs" / "usage.md"], ids=["README", "usage"])
+def test_fp_bits_table_matches_real_filters(page: Path) -> None:
+    """Every row of the sizes table is checked against a real filter of 1,000,000 keys."""
     import array
 
     from pyribbon import RibbonFilter
 
-    rows = re.findall(r"^\| (\d+) \| ([\d.]+)% \| ([\d.]+) \|$", README.read_text(), flags=re.MULTILINE)
-    assert [int(r) for r, _, _ in rows] == [4, 8, 12, 16, 20]
+    rows = re.findall(r"^\| (\d+) \| ([\d.]+)% \| ([\d.]+) \|$", page.read_text(), flags=re.MULTILINE)
+    assert [int(r) for r, _, _ in rows] == [1, 2, 4, 6, 8, 10, 12, 16, 20, 24, 28, 32]
     keys = array.array("q", range(1_000_000))
     for r, rate, bits in rows:
-        assert float(rate) == pytest.approx(
-            100 * 2.0 ** -int(r), rel=0.05
-        )  # the README rounds to two significant digits
+        assert float(rate) == pytest.approx(100 * 2.0 ** -int(r), rel=0.05)  # the table keeps two significant digits
         assert float(bits) == pytest.approx(RibbonFilter(keys, fp_bits=int(r)).bits_per_key, abs=0.005)
 
 
