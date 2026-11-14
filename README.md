@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo/pyribbon-lockup-white.svg">
-    <img alt="pyribbon" src="docs/img/logo/pyribbon-lockup.svg" width="360">
-  </picture>
+  <img alt="pyribbon" src="docs/img/logo/pyribbon-lockup.svg" width="360">
 </p>
 
 # pyribbon
