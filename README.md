@@ -38,15 +38,23 @@ reads the bytes where they are without copying them. Seven runnable scripts in
 ## Sizes
 
 The false-positive rate is `2**-fp_bits`, with `fp_bits` from 1 to 32 (default 8). Measured at 1,000,000 keys, the 64-byte
-header included. A Bloom filter needs `1.44 * fp_bits` bits per key.
+header included. Bits per key is a decimal because the filter has about 12% more rows than keys, so its size divided by the
+number of keys is not a whole number. A Bloom filter needs `1.44 * fp_bits` bits per key.
 
 | `fp_bits` | false-positive rate | bits per key |
 |---:|---:|---:|
+| 1 | 50% | 1.12 |
+| 2 | 25% | 2.25 |
 | 4 | 6.25% | 4.50 |
+| 6 | 1.6% | 6.75 |
 | 8 | 0.39% | 8.99 |
+| 10 | 0.098% | 11.24 |
 | 12 | 0.024% | 13.49 |
 | 16 | 0.0015% | 17.99 |
 | 20 | 0.000095% | 22.48 |
+| 24 | 0.0000060% | 26.98 |
+| 28 | 0.00000037% | 31.48 |
+| 32 | 0.000000023% | 35.97 |
 
 ## Performance
 

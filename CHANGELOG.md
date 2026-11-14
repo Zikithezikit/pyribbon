@@ -4,6 +4,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+- The sizes table in the README and the usage guide now covers the whole `fp_bits` range in 12 rows, from 1 to 32, and says why bits per key is a decimal. A test builds a filter for every row.
+
 - The benchmarks are rerun on the current code, on an idle machine. Building ten million keys from Python takes 77 ns per key at 8 bits (it was 94) and 92 at 16 bits (it was 109), because of the bucketed insertion order. Space, lookups and batch throughput are unchanged within noise.
 
 - `DESIGN.md` is replaced by `docs/internals.md`, which describes the code as it is now: parameters, hashing, the C core, the exact file format, the Python extension, the tests and the known gaps. `RESEARCH.md` moved to `docs/research.md`. Comments in the code point at the new files, and a test fails if a docs file named anywhere in the repository does not exist.
