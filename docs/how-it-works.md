@@ -7,6 +7,6 @@ key's `r`-bit fingerprint. Building is banded Gaussian elimination. If a random 
 percent of attempts at the default size), the build retries with a new seed.
 
 The design is the standard Ribbon filter of Dillinger and Walzer, "Ribbon filter: practically smaller than Bloom and Xor"
-(arXiv:2103.02515), with width 64 and the interleaved column layout. [RESEARCH.md](../RESEARCH.md) has the literature survey and
-[DESIGN.md](../DESIGN.md) the decisions, formats and measurements behind this implementation. The C core builds and tests without
+(arXiv:2103.02515), with width 64 and the interleaved column layout. [research.md](research.md) has the literature survey and
+[internals.md](internals.md) the parameters, formats and measurements behind this implementation. The C core builds and tests without
 Python (`make -C core test`).

@@ -1,5 +1,6 @@
-include LICENSE CHANGELOG.md CONTRIBUTING.md DESIGN.md RESEARCH.md stubtest-allowlist.txt
+include LICENSE CHANGELOG.md CONTRIBUTING.md stubtest-allowlist.txt
 graft LICENSES
+graft docs
 graft core/include
 graft core/src
 graft core/vendor

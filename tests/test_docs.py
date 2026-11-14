@@ -43,3 +43,17 @@ def test_api_reference_names_every_public_member() -> None:
     for member in members:
         shown = {"__contains__": "key in f", "__len__": "len(f)"}.get(member, member)
         assert shown in api, f"docs/api.md does not mention RibbonFilter.{member}"
+
+
+def test_every_docs_file_named_in_the_source_tree_exists() -> None:
+    """Comments, docstrings and docs name files like ``docs/internals.md``; moving or deleting one must not leave a dead name."""
+    named = re.compile(r"(?<![\w/.-])docs/([\w-]+\.(?:md|json|png))\b")
+    roots = [ROOT / d for d in ("src", "core", "tests", "benchmarks", ".github")]
+    files = [ROOT / n for n in ("README.md", "CONTRIBUTING.md", "SECURITY.md", "Makefile", "MANIFEST.in")]
+    for root in roots:
+        files += [p for p in root.rglob("*") if p.is_file() and p.suffix in {".py", ".c", ".h", ".md", ".yml", ".txt"}]
+    for path in files:
+        if "build" in path.parts or "__pycache__" in path.parts:
+            continue
+        for name in named.findall(path.read_text(errors="ignore")):
+            assert (DOCS / name).exists(), f"{path.relative_to(ROOT)} names docs/{name}, which does not exist"

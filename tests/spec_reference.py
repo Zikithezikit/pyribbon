@@ -1,4 +1,4 @@
-"""Pure-Python reference implementation of the pyribbon filter spec (DESIGN.md sections 3-5).
+"""Pure-Python reference implementation of the pyribbon filter spec (docs/internals.md sections 3-5).
 
 It exists to cross-check the C core: the two implementations are written separately from the same spec and must
 agree byte for byte. It is slow and used only for small sets in tests. XXH3 comes from the ``xxhash`` PyPI package,
@@ -72,7 +72,7 @@ def _seed_offset(seed: int) -> int:
 
 
 def hash_bytes(data: bytes, seed: int, kind: int) -> int:
-    """Return the master hash of a byte key (DESIGN.md section 3.1)."""
+    """Return the master hash of a byte key (docs/internals.md section 3.1)."""
     h0 = xxh3(data)
     if kind == KIND_STR:
         h0 ^= TAG_STR
@@ -95,7 +95,7 @@ def hash_int(value: int, seed: int) -> int:
 
 
 def hash_key(key: object, seed: int) -> int:
-    """Return the master hash of a Python key (DESIGN.md section 3.1)."""
+    """Return the master hash of a Python key (docs/internals.md section 3.1)."""
     if isinstance(key, int):
         return hash_int(key, seed)
     if isinstance(key, str):
@@ -106,7 +106,7 @@ def hash_key(key: object, seed: int) -> int:
 
 
 def derive(h: int, attempt: int, num_rows: int, r: int) -> tuple[int, int, int]:
-    """Return ``(start, coeff, fp)`` for master hash ``h`` (DESIGN.md section 3.2)."""
+    """Return ``(start, coeff, fp)`` for master hash ``h`` (docs/internals.md section 3.2)."""
     state = h ^ mix64(((attempt + 1) * GAMMA) & MASK)
     z0 = mix64((state + GAMMA) & MASK)
     z1 = mix64((state + 2 * GAMMA) & MASK)
@@ -204,7 +204,7 @@ def _back_substitute(coeff: list[int], res: list[int], rows: int, r: int) -> byt
 
 
 def serialize(num_keys: int, num_rows: int, r: int, seed: int, attempt: int, payload: bytes) -> bytes:
-    """Return the serialized filter (DESIGN.md section 5)."""
+    """Return the serialized filter (docs/internals.md section 5)."""
     h = bytearray(HEADER_SIZE)
     h[0:8] = MAGIC
     struct.pack_into("<HHBBBB", h, 8, 1, HEADER_SIZE, 6, r, 1, 0)

@@ -4,7 +4,7 @@
  *
  * Algorithm: P. C. Dillinger and S. Walzer, "Ribbon filter: practically smaller than
  * Bloom and Xor", arXiv:2103.02515 (cited as [R] in the sources). Design and format:
- * DESIGN.md. No false negatives; false-positive rate 2^-fp_bits.
+ * docs/internals.md. No false negatives; false-positive rate 2^-fp_bits.
  *
  * Thread safety: an rb_filter is immutable after rb_build / rb_from_buffer returns, so
  * any number of threads may query it concurrently. There is no global state, so separate
@@ -50,7 +50,7 @@ typedef enum {
 
 /* Key kinds for rb_hash_bytes. The kind is part of the hash, so the same bytes hashed as RB_KEY_BYTES, RB_KEY_STR
  * and RB_KEY_BIGINT are three different keys. Integers in [-2^63, 2^63) use rb_hash_i64. For an integer outside
- * that range, pass its little-endian two's complement bytes (DESIGN.md section 3.1) with RB_KEY_BIGINT. */
+ * that range, pass its little-endian two's complement bytes (docs/internals.md section 3.1) with RB_KEY_BIGINT. */
 typedef enum { RB_KEY_BYTES = 0, RB_KEY_STR = 1, RB_KEY_BIGINT = 2 } rb_key_kind;
 
 typedef struct {
@@ -72,7 +72,7 @@ rb_params rb_params_default(void);
  * an rb_status), so the caller must not free or modify it. */
 const char *rb_strerror(rb_status status);
 
-/* Key hashing (hash id 1, DESIGN.md section 3.1). The result is the 64-bit master hash
+/* Key hashing (hash id 1, docs/internals.md section 3.1). The result is the 64-bit master hash
  * that rb_build / rb_contains consume. The seed must equal the one given to rb_build.
  * `data` may be NULL when `len` is 0. Pure functions: no allocation, no failure. */
 uint64_t rb_hash_bytes(const void *data, size_t len, uint64_t seed, rb_key_kind kind);
@@ -112,7 +112,7 @@ void rb_contains_many(const rb_filter *filter, const uint64_t *hashes, size_t n,
 /* Exact length in bytes of the serialized filter: RB_HEADER_SIZE plus the payload. */
 size_t rb_serialized_size(const rb_filter *filter);
 
-/* Write the serialized filter (DESIGN.md section 5) to `dst`. `capacity` must be at least rb_serialized_size(filter),
+/* Write the serialized filter (docs/internals.md section 5) to `dst`. `capacity` must be at least rb_serialized_size(filter),
  * otherwise nothing is written and the status is RB_E_INVALID_ARG (also for a NULL `dst`). Writes exactly
  * rb_serialized_size(filter) bytes; `dst` needs no particular alignment. The bytes depend only on the hashes (in the order
  * given) and the parameters, not on the platform. */

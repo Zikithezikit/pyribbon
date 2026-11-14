@@ -24,7 +24,7 @@ Start with `01_quickstart.py` and read them in order. Each script in [`examples/
 A key can be `bytes`, `bytearray` or `memoryview` (hashed by content), `str` (as UTF-8) or `int` (any size; `numpy`
 integers work). `b"a"`, `"a"` and `97` are three different keys. Anything else, such as a `float`, `None` or a tuple,
 raises `TypeError`, because there is no implicit `str()`. Python's `hash()` is never used, so a saved filter can be loaded
-in any process on any platform. [DESIGN.md](../DESIGN.md) (section 3.1) specifies the exact mapping. [examples/02_key_types.py](../examples/02_key_types.py) tries each case.
+in any process on any platform. [internals.md](internals.md) (section 3.1) specifies the exact mapping. [examples/02_key_types.py](../examples/02_key_types.py) tries each case.
 
 ### Choosing `fp_bits`
 

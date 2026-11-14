@@ -3,13 +3,13 @@
  * GIL handling and error mapping live here; everything algorithmic is in core/.
  *
  * Built with the limited API (abi3, floor 3.11) where possible; the same source builds non-limited for 3.10
- * (Py_buffer joined the stable ABI in 3.11). See DESIGN.md section 6.
+ * (Py_buffer joined the stable ABI in 3.11). See docs/internals.md section 6.
  *
  * GIL: key hashing touches Python objects and runs with the GIL held. rb_build and large rb_contains_many
  * batches run without it, touching only plain C memory (no Python objects, refcounts or PyMem allocators).
  * Single-key __contains__ never releases the GIL: save/restore costs more than the ~30 ns of work.
  *
- * Free-threaded builds (no GIL at all): the module declares Py_mod_gil = Py_MOD_GIL_NOT_USED. The audit is in DESIGN.md
+ * Free-threaded builds (no GIL at all): the module declares Py_mod_gil = Py_MOD_GIL_NOT_USED. The audit is in docs/internals.md
  * section 6: a filter is never written after creation, module state is written only in module_exec, and the code
  * between the ALLOW_THREADS macros already assumed that no other thread's work is excluded.
  */
@@ -60,7 +60,7 @@ static ModState *state_of_type(PyTypeObject *tp) {
 }
 
 /* ------------------------------------------------------------------------------------------------- */
-/* key conversion (DESIGN.md section 3.1)                                                            */
+/* key conversion (docs/internals.md section 3.1)                                                            */
 
 static int hash_int(PyObject *value, uint64_t seed, uint64_t *out) {
   int overflow = 0;

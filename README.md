@@ -81,7 +81,7 @@ Delta is relative to the best other filter of the same fingerprint class, includ
 ## More
 
 Everything else is in [docs/](https://github.com/Zikithezikit/pyribbon/blob/main/docs/index.md): the [usage guide](https://github.com/Zikithezikit/pyribbon/blob/main/docs/usage.md), the [API reference](https://github.com/Zikithezikit/pyribbon/blob/main/docs/api.md), the
-[limits](https://github.com/Zikithezikit/pyribbon/blob/main/docs/limits.md), [how it works](https://github.com/Zikithezikit/pyribbon/blob/main/docs/how-it-works.md) and the full [performance numbers](https://github.com/Zikithezikit/pyribbon/blob/main/docs/performance.md) by number
+[limits](https://github.com/Zikithezikit/pyribbon/blob/main/docs/limits.md), [how it works](https://github.com/Zikithezikit/pyribbon/blob/main/docs/how-it-works.md), the [internals](https://github.com/Zikithezikit/pyribbon/blob/main/docs/internals.md) (hashing, the file format, the C core) and the full [performance numbers](https://github.com/Zikithezikit/pyribbon/blob/main/docs/performance.md) by number
 of keys. The C core builds and tests on its own: see [core/README.md](https://github.com/Zikithezikit/pyribbon/blob/main/core/README.md). To work on pyribbon, read
 [CONTRIBUTING.md](https://github.com/Zikithezikit/pyribbon/blob/main/CONTRIBUTING.md). To report a vulnerability, read [SECURITY.md](https://github.com/Zikithezikit/pyribbon/blob/main/SECURITY.md).
 

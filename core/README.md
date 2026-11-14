@@ -62,7 +62,7 @@ uint64_t h2 = rb_hash_i64(-7, seed);
 the hash, so the same bytes as `RB_KEY_BYTES` and as `RB_KEY_STR` are two different keys. `rb_hash_i64` takes an integer
 in the `int64_t` range. The seed is any `uint64_t`. Use the same seed when you hash the keys you query that you used
 when you hashed the keys you built from, and pass that seed in `rb_params` too: `rb_build` only stores it, it does not
-re-hash anything. The mapping from a key to its hash is hash id 1 and is specified in `DESIGN.md`, section 3.1. The
+re-hash anything. The mapping from a key to its hash is hash id 1 and is specified in `docs/internals.md`, section 3.1. The
 Python package writes and reads the same format, so a filter built there loads here when the keys are hashed this way.
 
 ### 2. Build
@@ -100,7 +100,7 @@ rb_status st = rb_serialize(f, buf, size);
 ```
 
 The size is known in advance: a 64-byte header plus the payload. `rb_serialize` returns `RB_E_INVALID_ARG` and writes
-nothing if `capacity` is smaller. The buffer needs no alignment. The format is specified in `DESIGN.md`, section 5; it is
+nothing if `capacity` is smaller. The buffer needs no alignment. The format is specified in `docs/internals.md`, section 5; it is
 little-endian, has a magic number and two checksums, and the same bytes come out on every platform for the same hashes and
 parameters.
 
@@ -151,7 +151,7 @@ failure the output pointer (`*out`) is NULL, so there is nothing to free.
 | `RB_E_FORMAT` | an inconsistent or unsupported header field, or trailing bytes after the payload |
 | `RB_E_CHECKSUM` | the header checksum does not match, or the payload checksum does not match when it was requested |
 
-The loader checks its rules in a fixed order and reports the first one that fails. `DESIGN.md`, section 5, lists the
+The loader checks its rules in a fixed order and reports the first one that fails. `docs/internals.md`, section 5, lists the
 order. The query functions have no failure mode, and passing them a NULL filter is not allowed.
 
 ### Accessors
@@ -170,7 +170,7 @@ while another thread is still using it, and you must not write to a buffer that 
 
 Space. A filter has `rows` rows, about `n * (1 + overhead)`, rounded up to a multiple of 64 with a minimum of 128. The
 serialized size is `64 + rows / 64 * fp_bits * 8` bytes, which is about `fp_bits * (1 + overhead)` bits per key plus the
-header. The default overhead is between 5% and 16% for up to 2^24 keys and grows slowly above that (`rb_default_overhead`, `DESIGN.md` section 2). At 1,000,000 keys
+header. The default overhead is between 5% and 16% for up to 2^24 keys and grows slowly above that (`rb_default_overhead`, `docs/internals.md` section 2). At 1,000,000 keys
 and `fp_bits` 8 that is 8.99 bits per key including the header, against 11.5 for a Bloom filter at the same false-positive
 rate.
 
@@ -186,7 +186,7 @@ query times against other libraries are in `docs/benchmark.md`.
 
 ## Where the details are
 
-`DESIGN.md` section 3 specifies how a key becomes a 64-bit hash and how that hash becomes ribbon coordinates, section 5
+`docs/internals.md` section 3 specifies how a key becomes a 64-bit hash and how that hash becomes ribbon coordinates, section 5
 specifies the serialized format, and section 4 describes this library. The format version 1 and hash id 1 are frozen. The
 file layout of this directory:
 

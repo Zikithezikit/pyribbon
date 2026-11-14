@@ -4,6 +4,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+- `DESIGN.md` is replaced by `docs/internals.md`, which describes the code as it is now: parameters, hashing, the C core, the exact file format, the Python extension, the tests and the known gaps. `RESEARCH.md` moved to `docs/research.md`. Comments in the code point at the new files, and a test fails if a docs file named anywhere in the repository does not exist.
+
 - Two more thread tests no longer judge by a fixed time. Under the instrumented coverage build one thread managed 2 loops in 3 seconds against a minimum of 3, so they now keep running until each thread has done its minimum work.
 
 - The README is now a short front page: install, a quick start, sizes and performance, with the rest in `docs/`. New pages cover usage, the API, limits, how it works and the full performance tables, and a docs index links them. Two tests keep the quick start running and the docs links and API reference complete.

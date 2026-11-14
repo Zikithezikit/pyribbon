@@ -385,7 +385,7 @@ def test_numpy_interop() -> None:
     assert np.int64(5) in RibbonFilter([5])  # numpy scalars are ints through __index__
 
 
-# ---- regressions for the independent review (see DESIGN.md section 6) ----------------------------------------------
+# ---- regressions for the independent review (see docs/internals.md section 6) ----------------------------------------------
 
 
 class _LyingLen:

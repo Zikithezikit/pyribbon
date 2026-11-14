@@ -16,8 +16,8 @@ line, a quick start and the headline numbers. Everything else is here.
 - [Performance](performance.md): space, build time and lookup time against `pyfusefilter` and `rbloom`, by number of keys.
 - [Benchmark report](benchmark.md): the machine, the method, medians, spreads and caveats behind those numbers.
 - [Measured false-positive rates](measurements.md): every test case, with the number of probes behind it.
-- [DESIGN.md](../DESIGN.md): the decisions, the serialization format and the measurements behind the implementation.
-- [RESEARCH.md](../RESEARCH.md): the literature survey.
+- [Internals](internals.md): the parameters, how a key is hashed, the C core, the exact file format, the Python extension, the tests and what is missing.
+- [Research notes](research.md): the literature survey.
 
 ## The C library
 
