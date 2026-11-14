@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 - Two more thread tests no longer judge by a fixed time. Under the instrumented coverage build one thread managed 2 loops in 3 seconds against a minimum of 3, so they now keep running until each thread has done its minimum work.
 
+- The README is now a short front page: install, a quick start, sizes and performance, with the rest in `docs/`. New pages cover usage, the API, limits, how it works and the full performance tables, and a docs index links them. Two tests keep the quick start running and the docs links and API reference complete.
+
 - Two concurrency tests failed on busy macOS runners for the free-threaded build. The GIL test is now skipped there, since that build has no GIL, and the two stress tests wait until every thread has finished a round instead of judging by a fixed sleep.
 
 - The README links the PyPI page and shows PyPI, Python-version and licence badges, and the package metadata now carries the free-threading classifier. The classifier reaches the PyPI page with the next release.

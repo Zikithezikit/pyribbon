@@ -7,6 +7,16 @@ make check         # lint, docstyle, mypy + stubtest, C tests, Python tests
 make example       # run every script in examples/ (a test also runs them)
 ```
 
+The longer checks and the measurements:
+
+```bash
+make c-asan c-portable  # C tests under ASan/UBSan, and with the portable bit-op fallbacks
+make c-fuzz             # fuzz the loader
+make stats              # millions of probes: measured false-positive rates (docs/measurements.md)
+make bench              # the benchmark (docs/benchmark.png, docs/benchmark.md), then run benchmarks/update_readme.py
+make figures            # redraw docs/img/*.png from the saved results, without measuring again
+```
+
 To run the lint and format checks before every commit, install the hooks once with `pip install pre-commit && pre-commit install`.
 They run `ruff check` and `ruff format` with the settings in `pyproject.toml`, and `.editorconfig` sets the indentation
 (4 spaces in Python, 2 in C, YAML and TOML, tabs in Makefiles). Open a pull request from a branch; the template lists what to
@@ -14,7 +24,9 @@ check. Bugs and feature requests have issue templates. Vulnerabilities do not go
 sends weekly updates for the GitHub Actions the workflows use.
 
 New examples go in `examples/` with the next number (`08_...py`) and a docstring that says how to run it. `tests/test_examples.py`
-runs each script, and `tests/test_readme.py` checks that the README lists it.
+runs each script, and `tests/test_readme.py` checks that `docs/usage.md` lists it. The README keeps one short quick start
+and links the rest into `docs/`; `tests/test_docs.py` checks that every docs link works and that `docs/api.md` names every public
+member, so a new method needs an entry there.
 
 The C core (`core/`) builds and tests without Python, using `make c-test`, `make c-asan` and `make c-portable`.
 C code must compile with `-std=c11 -Wall -Wextra -Wconversion -Werror`. A change to the algorithm needs a citation to
