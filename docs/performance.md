@@ -18,16 +18,16 @@ The first table summarises the largest size, comparing pyribbon with the best ot
 | --- | --- | ---: | ---: | ---: | ---: |
 | 8-bit | bits/key | 9.19 | 9.02 (Fuse8) | +2% | **pyribbon behind** |
 | 8-bit | bits/key above log2(1/FPR) | 1.18 | 1.00 (Fuse8) | +17% | **pyribbon behind** |
-| 8-bit | build ns/key | 94 | 219 (rbloom 2^-8, builtin hash()) | -57% | pyribbon ahead |
-| 8-bit | `in` member ns | 91 | 229 (rbloom 2^-8, builtin hash()) | -60% | pyribbon ahead |
-| 8-bit | `in` non-member ns | 93 | 155 (rbloom 2^-8, builtin hash()) | -40% | pyribbon ahead |
-| 8-bit | batch Mkeys/s (50/50 mix) | 18.04 | 5.01 (rbloom 2^-8, builtin hash()) | +260% | pyribbon ahead |
+| 8-bit | build ns/key | 77 | 212 (rbloom 2^-8, builtin hash()) | -64% | pyribbon ahead |
+| 8-bit | `in` member ns | 87 | 221 (rbloom 2^-8, builtin hash()) | -61% | pyribbon ahead |
+| 8-bit | `in` non-member ns | 89 | 141 (rbloom 2^-8, builtin hash()) | -37% | pyribbon ahead |
+| 8-bit | batch Mkeys/s (50/50 mix) | 18.06 | 5.17 (rbloom 2^-8, builtin hash()) | +249% | pyribbon ahead |
 | 16-bit | bits/key | 18.39 | 18.04 (Fuse16) | +2% | **pyribbon behind** |
 | 16-bit | bits/key above log2(1/FPR) | 2.36 | 1.95 (Fuse16) | +21% | **pyribbon behind** |
-| 16-bit | build ns/key | 109 | 441 (rbloom 2^-16, builtin hash()) | -75% | pyribbon ahead |
-| 16-bit | `in` member ns | 138 | 431 (rbloom 2^-16, builtin hash()) | -68% | pyribbon ahead |
-| 16-bit | `in` non-member ns | 113 | 169 (rbloom 2^-16, builtin hash()) | -33% | pyribbon ahead |
-| 16-bit | batch Mkeys/s (50/50 mix) | 10.81 | 3.24 (rbloom 2^-16, builtin hash()) | +234% | pyribbon ahead |
+| 16-bit | build ns/key | 92 | 447 (rbloom 2^-16, builtin hash()) | -80% | pyribbon ahead |
+| 16-bit | `in` member ns | 136 | 435 (rbloom 2^-16, builtin hash()) | -69% | pyribbon ahead |
+| 16-bit | `in` non-member ns | 108 | 163 (rbloom 2^-16, builtin hash()) | -34% | pyribbon ahead |
+| 16-bit | batch Mkeys/s (50/50 mix) | 11.05 | 3.20 (rbloom 2^-16, builtin hash()) | +245% | pyribbon ahead |
 
 Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()`; a negative delta means pyribbon is lower. Lower is better except for batch throughput. The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. The batch row compares `contains_many` with the other libraries' per-key loop, because none of them has a batch API. The table is computed from the raw results of this run.
 <!-- bench:end -->
@@ -49,21 +49,21 @@ The next tables show how the results change with the number of keys:
 
 | n | pyribbon (Python keys) | Fuse8 as shipped | Fuse8 C core only |
 |---:|---:|---:|---:|
-| 1,000 | 68 | 549 | 42 |
-| 10,000 | 56 | 529 | 28 |
-| 100,000 | 57 | 555 | 28 |
-| 1,000,000 | 71 | 582 | 40 |
-| 10,000,000 | 94 | 613 | 57 |
+| 1,000 | 69 | 522 | 40 |
+| 10,000 | 57 | 496 | 29 |
+| 100,000 | 56 | 521 | 27 |
+| 1,000,000 | 58 | 541 | 38 |
+| 10,000,000 | 77 | 576 | 55 |
 
 *Query: `key in f` in ns (member / non-member) and `contains_many` throughput (million keys per second, 50/50 mix, from a list and from an `array('q')`):*
 
 | n | pyribbon `in` | Fuse8 `in` | pyribbon batch (list) | pyribbon batch (array) |
 |---:|---:|---:|---:|---:|
-| 1,000 | 46 / 40 | 685 / 698 | 21.9 | 30.7 |
-| 10,000 | 46 / 40 | 727 / 699 | 22.1 | 30.7 |
-| 100,000 | 47 / 43 | 729 / 705 | 21.0 | 28.9 |
-| 1,000,000 | 54 / 52 | 728 / 737 | 21.0 | 28.6 |
-| 10,000,000 | 91 / 93 | 806 / 804 | 18.0 | 24.0 |
+| 1,000 | 46 / 40 | 660 / 659 | 21.4 | 30.5 |
+| 10,000 | 46 / 40 | 642 / 641 | 21.6 | 30.5 |
+| 100,000 | 46 / 44 | 646 / 646 | 21.6 | 30.5 |
+| 1,000,000 | 52 / 51 | 657 / 681 | 20.6 | 29.4 |
+| 10,000,000 | 87 / 89 | 733 / 731 | 18.1 | 24.6 |
 <!-- bench-by-size:end -->
 
 On space, pyribbon is the smallest filter up to about a hundred thousand keys, roughly level with Fuse8 at a million, and
