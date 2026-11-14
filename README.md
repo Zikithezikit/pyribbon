@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="pyribbon" src="docs/img/logo/pyribbon-lockup.svg" width="360">
+  <img alt="pyribbon" src="docs/img/logo/pyribbon-lockup-on-white.svg" width="792">
 </p>
 
 # pyribbon
