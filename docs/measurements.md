@@ -1,6 +1,6 @@
 # pyribbon measurements
 
-Generated 2026-11-12 by `make stats` (`tests/test_statistics.py`, marked `slow`) on Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz, CPython 3.14.4, pyribbon 0.1.0. Every row is a measurement; tolerances are 5 sigma of the exact binomial.
+Generated 2026-11-14 by `make stats` (`tests/test_statistics.py`, marked `slow`) on Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz, CPython 3.14.4, pyribbon 0.1.2. Every row is a measurement; tolerances are 5 sigma of the exact binomial.
 
 ## False-positive rate vs 2^-fp_bits
 
