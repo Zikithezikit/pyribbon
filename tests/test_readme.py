@@ -1,5 +1,5 @@
-"""The README is executable documentation: every Python example runs, printed output matches its comment, and the
-benchmark table is an exact copy of the one in docs/benchmark.md."""
+"""The README and the docs are checked documentation: the quick start runs, every example script is listed, the benchmark
+tables are exact copies of the ones in docs/benchmark.md, and every link points at something that exists."""
 
 from __future__ import annotations
 
@@ -16,18 +16,26 @@ README = ROOT / "README.md"
 pytestmark = pytest.mark.skipif(not README.exists(), reason="README.md is not shipped next to the installed tests")
 
 
-def test_readme_links_every_example_and_only_real_ones() -> None:
-    """The examples live in examples/, not in the README: each script is listed there, with an absolute link (so it also
-    works on the PyPI page), and each link points at a file."""
-    text = README.read_text()
-    prefix = "https://github.com/Zikithezikit/pyribbon/blob/main/"
-    linked = set(re.findall(r"\]\(" + re.escape(prefix) + r"(examples/[\w./-]+\.py)\)", text))
+def test_usage_page_lists_every_example_and_only_real_ones() -> None:
+    """The examples live in examples/. docs/usage.md lists each script with a link, and each link points at a file."""
+    text = (ROOT / "docs" / "usage.md").read_text()
+    linked = set(re.findall(r"\]\(\.\./(examples/[\w./-]+\.py)\)", text))
     on_disk = {f"examples/{p.name}" for p in (ROOT / "examples").glob("*.py")}
     assert on_disk, "examples/ has no scripts"
-    assert linked == on_disk, f"README and examples/ disagree: {sorted(linked ^ on_disk)}"
-    assert "```python" not in text, "put code in examples/ and link to it"
-    relative = re.findall(r"\]\((?!https?://|#)([^)]+)\)", text)
-    assert not relative, f"relative links break on the PyPI page; use absolute URLs: {relative}"
+    assert linked == on_disk, f"docs/usage.md and examples/ disagree: {sorted(linked ^ on_disk)}"
+
+
+def test_readme_quick_start_runs() -> None:
+    """The README's one Python block runs as written; its asserts are the check."""
+    blocks = re.findall(r"```python\n(.*?)```", README.read_text(), flags=re.DOTALL)
+    assert len(blocks) == 1, "the README has exactly one quick start block; longer code belongs in examples/"
+    exec(compile(blocks[0], "README.md", "exec"), {})  # noqa: S102
+
+
+def test_readme_links_are_absolute() -> None:
+    """Relative links break on the PyPI page, so the README uses absolute URLs."""
+    relative = re.findall(r"\]\((?!https?://|#)([^)]+)\)", README.read_text())
+    assert not relative, f"use absolute URLs: {relative}"
 
 
 def _update_readme():  # type: ignore[no-untyped-def]
@@ -39,14 +47,17 @@ def _update_readme():  # type: ignore[no-untyped-def]
     return update_readme
 
 
-def test_readme_benchmark_blocks_match_the_generated_results() -> None:
+def test_benchmark_blocks_match_the_generated_results() -> None:
     mod = _update_readme()
-    readme = README.read_text()
     md, js = ROOT / "docs" / "benchmark.md", ROOT / "docs" / "benchmark.json"
     assert md.exists() and js.exists(), "run `make bench` first"
-    stale = "README benchmark block is stale: run `python benchmarks/update_readme.py` after `make bench`"
-    assert mod.read_block(readme, "bench") == mod.benchmark_block(md.read_text()), stale
-    assert mod.read_block(readme, "bench-by-size") == mod.by_size_block(json.loads(js.read_text())), stale
+    stale = "benchmark block is stale: run `python benchmarks/update_readme.py` after `make bench`"
+    summary = mod.benchmark_block(md.read_text())
+    by_size = mod.by_size_block(json.loads(js.read_text()))
+    page = (ROOT / "docs" / "performance.md").read_text()
+    assert mod.read_block(README.read_text(), "bench") == summary, f"README {stale}"
+    assert mod.read_block(page, "bench") == summary, f"docs/performance.md {stale}"
+    assert mod.read_block(page, "bench-by-size") == by_size, f"docs/performance.md {stale}"
 
 
 def test_readme_fp_bits_table_matches_real_filters() -> None:
@@ -72,7 +83,7 @@ def test_readme_images_exist() -> None:
     images = re.findall(r"!\[[^\]]*\]\((\S+?)\)", README.read_text())
     urls = [u for u in images if not u.endswith("/badge.svg") and not u.startswith("https://img.shields.io/")]
     prefix = "https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/"
-    assert len(urls) >= 2
+    assert len(urls) >= 1
     for url in urls:
         assert url.startswith(prefix), f"use an absolute raw URL for {url}"
         assert (ROOT / url.removeprefix(prefix)).is_file(), f"missing image file for {url}"

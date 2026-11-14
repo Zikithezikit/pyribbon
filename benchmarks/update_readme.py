@@ -1,8 +1,8 @@
-"""Copy benchmark results into README.md between marker comments, generated from docs/benchmark.md and benchmark.json.
+"""Copy benchmark results between marker comments in README.md and docs/performance.md, from docs/benchmark.md and benchmark.json.
 
 Usage: ``python benchmarks/update_readme.py`` (run by hand after ``make bench``; tests/test_readme.py checks the result).
-Blocks: ``bench`` (the wins-and-loses table, copied verbatim from the markdown report) and ``bench-by-size`` (space, build
-and query tables built from the JSON). No benchmark number in the README is typed by hand.
+Blocks: ``bench`` (the wins-and-loses table, copied verbatim from the markdown report, in both files) and ``bench-by-size`` (space, build
+and query tables built from the JSON, in docs/performance.md only). No benchmark number in the README or the performance page is typed by hand.
 """
 
 from __future__ import annotations
@@ -87,14 +87,15 @@ def read_block(readme: str, name: str) -> str:
 
 
 def main() -> None:
-    """Rewrite the generated blocks of README.md from docs/."""
-    readme = (ROOT / "README.md").read_text()
-    readme = replace_block(readme, "bench", benchmark_block((ROOT / "docs" / "benchmark.md").read_text()))
-    readme = replace_block(
-        readme, "bench-by-size", by_size_block(json.loads((ROOT / "docs" / "benchmark.json").read_text()))
-    )
-    (ROOT / "README.md").write_text(readme)
-    print("README.md updated from docs/benchmark.md and docs/benchmark.json")
+    """Rewrite the generated blocks of README.md and docs/performance.md from the benchmark results in docs/."""
+    summary = benchmark_block((ROOT / "docs" / "benchmark.md").read_text())
+    by_size = by_size_block(json.loads((ROOT / "docs" / "benchmark.json").read_text()))
+    readme = ROOT / "README.md"
+    readme.write_text(replace_block(readme.read_text(), "bench", summary))
+    page = ROOT / "docs" / "performance.md"
+    text = replace_block(page.read_text(), "bench", summary)
+    page.write_text(replace_block(text, "bench-by-size", by_size))
+    print("README.md and docs/performance.md updated from docs/benchmark.md and docs/benchmark.json")
 
 
 if __name__ == "__main__":
