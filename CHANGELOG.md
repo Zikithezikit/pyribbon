@@ -4,22 +4,29 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
-- The sizes table in the README and the usage guide now covers the whole `fp_bits` range in 12 rows, from 1 to 32, and says why bits per key is a decimal. A test builds a filter for every row.
+## [0.1.2] - 2026-11-14
 
-- The benchmarks are rerun on the current code, on an idle machine. Building ten million keys from Python takes 77 ns per key at 8 bits (it was 94) and 92 at 16 bits (it was 109), because of the bucketed insertion order. Space, lookups and batch throughput are unchanged within noise.
+The library and the file format are unchanged since 0.1.1. This release is documentation, tests and package metadata.
 
-- `DESIGN.md` is replaced by `docs/internals.md`, which describes the code as it is now: parameters, hashing, the C core, the exact file format, the Python extension, the tests and the known gaps. `RESEARCH.md` moved to `docs/research.md`. Comments in the code point at the new files, and a test fails if a docs file named anywhere in the repository does not exist.
+### Added
+- The package metadata carries the free-threading classifier, so the PyPI page shows that free-threaded Python is supported.
 
-- Two more thread tests no longer judge by a fixed time. Under the instrumented coverage build one thread managed 2 loops in 3 seconds against a minimum of 3, so they now keep running until each thread has done its minimum work.
+### Documentation
+- The README is a short front page: install, a quick start, sizes and performance. It links the PyPI page and shows PyPI,
+  Python-version and licence badges.
+- The rest moved into `docs/`: a usage guide, an API reference, limits, how it works, the full performance tables, and an index
+  that links them. `DESIGN.md` is replaced by `docs/internals.md`, which describes the code as it is now: parameters, hashing, the
+  C core, the exact file format, the Python extension, the tests and the known gaps. `RESEARCH.md` moved to `docs/research.md`.
+- The sizes table covers the whole `fp_bits` range, 1 to 32, in 12 rows, and says why bits per key is a decimal.
+- The benchmarks, the measured false-positive rates and the figures are rerun on this version, on an idle machine.
 
-- The README is now a short front page: install, a quick start, sizes and performance, with the rest in `docs/`. New pages cover usage, the API, limits, how it works and the full performance tables, and a docs index links them. Two tests keep the quick start running and the docs links and API reference complete.
-
-- Two concurrency tests failed on busy macOS runners for the free-threaded build. The GIL test is now skipped there, since that build has no GIL, and the two stress tests wait until every thread has finished a round instead of judging by a fixed sleep.
-
-- The README links the PyPI page and shows PyPI, Python-version and licence badges, and the package metadata now carries the free-threading classifier. The classifier reaches the PyPI page with the next release.
-
-- The test that a large build does not hold the GIL uses a lower threshold: it failed once on a loaded macOS Intel runner during
-  the 0.1.1 release, with a ticker at 17% of its free speed where a build that held the GIL would give about 0%.
+### Tests
+- The thread tests no longer depend on timing. The GIL test is skipped on free-threaded builds, which have no GIL, and the stress
+  tests keep running until every thread has done its minimum work. The GIL test's threshold is lower, because a loaded runner
+  once measured 17% where a build that held the GIL would give about 0%.
+- New tests keep the README quick start running, check that every docs link and image points at a file, that the API reference
+  names every public member, that every docs file named anywhere in the repository exists, and that every row of the sizes
+  table matches a real filter.
 
 ## [0.1.1] - 2026-11-13
 
