@@ -64,16 +64,16 @@ The largest size, against the best other filter of the same fingerprint width:
 | --- | --- | ---: | ---: | ---: | ---: |
 | 8-bit | bits/key | 9.19 | 9.02 (Fuse8) | +2% | **pyribbon behind** |
 | 8-bit | bits/key above log2(1/FPR) | 1.18 | 1.00 (Fuse8) | +17% | **pyribbon behind** |
-| 8-bit | build ns/key | 94 | 219 (rbloom 2^-8, builtin hash()) | -57% | pyribbon ahead |
-| 8-bit | `in` member ns | 91 | 229 (rbloom 2^-8, builtin hash()) | -60% | pyribbon ahead |
-| 8-bit | `in` non-member ns | 93 | 155 (rbloom 2^-8, builtin hash()) | -40% | pyribbon ahead |
-| 8-bit | batch Mkeys/s (50/50 mix) | 18.04 | 5.01 (rbloom 2^-8, builtin hash()) | +260% | pyribbon ahead |
+| 8-bit | build ns/key | 77 | 212 (rbloom 2^-8, builtin hash()) | -64% | pyribbon ahead |
+| 8-bit | `in` member ns | 87 | 221 (rbloom 2^-8, builtin hash()) | -61% | pyribbon ahead |
+| 8-bit | `in` non-member ns | 89 | 141 (rbloom 2^-8, builtin hash()) | -37% | pyribbon ahead |
+| 8-bit | batch Mkeys/s (50/50 mix) | 18.06 | 5.17 (rbloom 2^-8, builtin hash()) | +249% | pyribbon ahead |
 | 16-bit | bits/key | 18.39 | 18.04 (Fuse16) | +2% | **pyribbon behind** |
 | 16-bit | bits/key above log2(1/FPR) | 2.36 | 1.95 (Fuse16) | +21% | **pyribbon behind** |
-| 16-bit | build ns/key | 109 | 441 (rbloom 2^-16, builtin hash()) | -75% | pyribbon ahead |
-| 16-bit | `in` member ns | 138 | 431 (rbloom 2^-16, builtin hash()) | -68% | pyribbon ahead |
-| 16-bit | `in` non-member ns | 113 | 169 (rbloom 2^-16, builtin hash()) | -33% | pyribbon ahead |
-| 16-bit | batch Mkeys/s (50/50 mix) | 10.81 | 3.24 (rbloom 2^-16, builtin hash()) | +234% | pyribbon ahead |
+| 16-bit | build ns/key | 92 | 447 (rbloom 2^-16, builtin hash()) | -80% | pyribbon ahead |
+| 16-bit | `in` member ns | 136 | 435 (rbloom 2^-16, builtin hash()) | -69% | pyribbon ahead |
+| 16-bit | `in` non-member ns | 108 | 163 (rbloom 2^-16, builtin hash()) | -34% | pyribbon ahead |
+| 16-bit | batch Mkeys/s (50/50 mix) | 11.05 | 3.20 (rbloom 2^-16, builtin hash()) | +245% | pyribbon ahead |
 
 Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()`; a negative delta means pyribbon is lower. Lower is better except for batch throughput. The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. The batch row compares `contains_many` with the other libraries' per-key loop, because none of them has a batch API. The table is computed from the raw results of this run.
 <!-- bench:end -->
