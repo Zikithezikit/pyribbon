@@ -4,6 +4,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+- The README shows the pyribbon logo. The logo files are in `docs/img/logo/`: the mark and the lockup as SVG, in colour, ink, white and single-colour versions, a few PNG sizes, and a social preview image.
+
 ## [0.1.2] - 2026-11-14
 
 The library and the file format are unchanged since 0.1.1. This release is documentation, tests and package metadata.

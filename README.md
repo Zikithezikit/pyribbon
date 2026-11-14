@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/docs/img/logo/pyribbon-lockup-white.svg">
+    <img alt="pyribbon" src="https://raw.githubusercontent.com/Zikithezikit/pyribbon/main/docs/img/logo/pyribbon-lockup.svg" width="360">
+  </picture>
+</p>
+
 # pyribbon
 
 [![PyPI](https://img.shields.io/pypi/v/pyribbon)](https://pypi.org/project/pyribbon/)
