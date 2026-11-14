@@ -10,5 +10,5 @@ gcc -O2 -std=gnu11 -DNW=1 -o sim64  sim_width.c && ./sim64  7 22   # w = 64
 gcc -O2 -std=gnu11 -DNW=2 -o sim128 sim_width.c && ./sim128 7 22   # w = 128
 ```
 
-`sim_width_w64.txt` and `sim_width_w128.txt` hold the output of the run used in DESIGN.md (Intel i7-7700, governor
+`sim_width_w64.txt` and `sim_width_w128.txt` hold the output of the run used in docs/internals.md (Intel i7-7700, governor
 `powersave`, gcc 15.2). The `ns/key` column times this naive generic code, not the library, so treat it as a rough ratio.

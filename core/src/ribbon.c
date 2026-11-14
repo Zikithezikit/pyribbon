@@ -1,13 +1,13 @@
 /*
  * ribbon.c - standard ribbon filter, width w = 64, interleaved column layout (ICML).
  *
- * Sources (see RESEARCH.md): [R] Dillinger & Walzer, arXiv:2103.02515, sections 2-5.
+ * Sources (see docs/research.md): [R] Dillinger & Walzer, arXiv:2103.02515, sections 2-5.
  *  - one equation per key: coeff . Z[start .. start+63] = fp, with bit 0 of coeff forced to 1 [R p3];
  *  - on-the-fly banded Gaussian elimination in arrival order, no sorting [R sec. 3, Alg. 1];
  *  - back-substitution from the last row to the first [R p4];
  *  - interleaved column-major storage: for each block of 64 rows, r words, word j = column j [R sec. 5.2];
  *  - failure is handled by retrying with a new seed or a slightly larger table [R sec. 5.3].
- * Format and derivation details: DESIGN.md sections 3-5.
+ * Format and derivation details: docs/internals.md sections 3-5.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -146,7 +146,7 @@ static int rb_band_insert(rb_slot *slots, uint64_t i, uint64_t c, uint32_t b) {
 
 /* Large tables are filled bucket by bucket. For a table whose slots do not fit in the caches, a key's slot is a random
  * memory access and the build is bound by memory latency. The system's solution does not depend on the order in which the
- * equations arrive (DESIGN.md section 4), so the keys are first grouped by start row (a counting sort on start >> shift,
+ * equations arrive (docs/internals.md section 4), so the keys are first grouped by start row (a counting sort on start >> shift,
  * one extra 8-byte word per key) and then inserted bucket after bucket: the slots of one bucket stay in cache and the
  * elimination walks memory in increasing order. Smaller tables keep the plain arrival-order loop. */
 #ifndef RB_BUCKET_MIN_ROWS
@@ -349,7 +349,7 @@ void rb_contains_many(const rb_filter *f, const uint64_t *hashes, size_t n, uint
 }
 
 /* ------------------------------------------------------------------------------------ */
-/* serialization and loading (DESIGN.md section 5)                                      */
+/* serialization and loading (docs/internals.md section 5)                                      */
 
 size_t rb_serialized_size(const rb_filter *f) { return RB_HEADER_SIZE + rb_payload_bytes(f->num_rows, f->fp_bits); }
 

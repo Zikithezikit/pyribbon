@@ -1,7 +1,7 @@
 """Ribbon filters for Python.
 
 A ribbon filter is a static approximate-membership structure: ``key in filter`` never returns a false negative, and
-returns a false positive with probability about ``2**-fp_bits``. The core is written in C (see ``DESIGN.md``).
+returns a false positive with probability about ``2**-fp_bits``. The core is written in C (see ``docs/internals.md``).
 
 Example:
     >>> from pyribbon import RibbonFilter

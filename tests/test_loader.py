@@ -31,7 +31,7 @@ STATUS_TEXT = {
     "FORMAT": "inconsistent or unsupported header",
     "CHECKSUM": "checksum mismatch",
 }
-# header layout (DESIGN.md section 5): name -> (offset, size)
+# header layout (docs/internals.md section 5): name -> (offset, size)
 FIELDS = {
     "magic": (0, 8),
     "version": (8, 2),

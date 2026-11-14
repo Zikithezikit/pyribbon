@@ -115,7 +115,7 @@ static inline uint64_t rb_mix64(uint64_t z) {
 }
 
 /* One equation of the ribbon system: row `start`, coefficient window `coeff` (bit k selects
- * row start + k, bit 0 always set), and r-bit fingerprint `fp`. DESIGN.md section 3.2. */
+ * row start + k, bit 0 always set), and r-bit fingerprint `fp`. docs/internals.md section 3.2. */
 typedef struct {
   uint64_t start;
   uint64_t coeff;

@@ -1,7 +1,7 @@
 """Concurrency: querying one filter from many threads, concurrent builds and loads, and GIL release.
 
 An immutable ``RibbonFilter`` is safe to query concurrently from any number of threads: no field is written after
-construction, there is no lazy state and the C core has no globals (DESIGN.md section 6). A query also holds a
+construction, there is no lazy state and the C core has no globals (docs/internals.md section 6). A query also holds a
 reference to its filter, so dropping the last other reference while it runs cannot free it. Concurrent builds are
 independent. These tests compare every concurrent answer with a precomputed single-threaded one.
 

@@ -67,7 +67,7 @@ def emit(capsys: pytest.CaptureFixture[str], table: str, header: str, line: str)
 
 
 def plan_probes(r: int) -> tuple[int, int]:
-    """Probe counts ``(ints, strs_and_bytes_each)``: about 2000 expected hits, DESIGN.md section 10 minimums, capped."""
+    """Probe counts ``(ints, strs_and_bytes_each)``: about 2000 expected hits, at least 100 million int probes for r >= 8 (10 million below), capped."""
     ideal = 2000 * 2**r
     ints = min(max(ideal, 10_000_000 if r < 8 else 100_000_000), TOTAL_PROBE_CAP)
     aux = min(max(ideal, 10_000_000), (TOTAL_PROBE_CAP - ints) // 2)
@@ -222,11 +222,11 @@ def test_size_at_defaults_matches_documented_sizing(
         assert f.size_in_bytes == 64 + built_rows * r // 8
         grown += built_rows != rows  # a third or later attempt grows the table
     median = statistics.median(sizes)
-    design = r * (1 + eps)  # DESIGN.md section 2: bits/key before rounding m up to 64 and before the header
+    design = r * (1 + eps)  # docs/internals.md section 2: bits/key before rounding m up to 64 and before the header
     stats["size"].append({"n": n, "r": r, "overhead": eps, "rows": rows, "design_bits_per_key": design,
                           "expected_bits_per_key": 8 * expected / n, "measured_bits_per_key": 8 * median / n,
                           "sizes": sizes, "grown_builds": grown})  # fmt: skip
-    emit(capsys, "size", f"{'n':>8} {'r':>3} {'overhead':>9} {'rows':>9} {'DESIGN b/key':>13} {'expected':>9} {'measured':>9} {'min..max':>15} {'grown':>5}",
+    emit(capsys, "size", f"{'n':>8} {'r':>3} {'overhead':>9} {'rows':>9} {'design b/key':>13} {'expected':>9} {'measured':>9} {'min..max':>15} {'grown':>5}",
          f"{n:>8} {r:>3} {eps:>9.4f} {rows:>9} {design:>13.3f} {8 * expected / n:>9.3f} {8 * median / n:>9.3f} "
          f"{8 * min(sizes) / n:>7.3f}..{8 * max(sizes) / n:<7.3f} {grown:>5}")  # fmt: skip
     assert abs(median - expected) / expected <= 0.03

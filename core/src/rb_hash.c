@@ -1,5 +1,5 @@
 /*
- * rb_hash.c - key -> 64-bit master hash (hash id 1, DESIGN.md section 3.1).
+ * rb_hash.c - key -> 64-bit master hash (hash id 1, docs/internals.md section 3.1).
  *
  *   bytes:  h0 = XXH3_64bits(data)            str: h0 = XXH3_64bits(utf8) ^ TAG_STR
  *   int64:  h0 = (uint64)value ^ TAG_INT      bigint: h0 = XXH3_64bits(le bytes) ^ TAG_BIGINT
@@ -7,11 +7,11 @@
  *
  * The seed is pre-mixed and ADDED. Mixing it in by XOR let dense integer keys collide across seeds: the set of
  * values {i ^ seed} is nearly the same for nearby seeds, so seed=1 rebuilt (almost) the filter of seed=0. A random
- * 64-bit offset makes every seed an independent hash universe (found by measurement, see DESIGN.md section 3.1).
+ * 64-bit offset makes every seed an independent hash universe (found by measurement, see docs/internals.md section 3.1).
  *
  * XXH3 is vendored (BSD-2-Clause, core/vendor/xxhash.h). Configuration: inline-only, no
  * streaming API, scalar code path and the memcpy memory-access mode (the default mode lets
- * GCC miscompile unaligned reads; see RESEARCH.md section 10). Output is identical on every
+ * GCC miscompile unaligned reads; see docs/research.md section 10). Output is identical on every
  * platform by xxHash's design.
  */
 #define XXH_INLINE_ALL

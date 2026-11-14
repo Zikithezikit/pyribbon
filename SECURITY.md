@@ -40,6 +40,6 @@ published advisory, and the reporter is credited unless they prefer not to be.
 
 The loader checks a fixed sequence of rules in a fixed order, and the unverified path still runs every O(1) rule, so it
 cannot read out of bounds. It copies the 64 header bytes before parsing them. The sequence is in
-[DESIGN.md](DESIGN.md) section 5. The same file describes the tests in section 10 and the CI gates in section 12: a
+[docs/internals.md](docs/internals.md) section 5. Section 7 of the same file lists the tests and the CI jobs: a
 differential fuzz of the loader against an independent Python reference, hand-crafted hostile headers, libFuzzer on the
 loader under ASan and UBSan, ASan and UBSan runs of the C tests and the extension, and a `-Werror` build with `-Wconversion`.
