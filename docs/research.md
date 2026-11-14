@@ -3,7 +3,7 @@
 Background research for pyribbon, written 2026-11-12. Every claim carries a source tag. Anything I could not
 verify is marked **unverified**, and my own derivations are marked *(inference)*. No number below comes from
 pyribbon itself, because pyribbon has no code yet. Numbers from the papers or from other projects are their
-authors' claims; we re-measure ours in Phase 2 (see DESIGN.md, "Evidence plan").
+authors' claims; we re-measure ours in Phase 2 (see [internals.md](internals.md), section 7).
 
 Source tags: **[R]** Dillinger & Walzer, *Ribbon filter: practically smaller than Bloom and Xor*, arXiv:2103.02515v2
 (Mar 2021; no venue printed in the PDF, so treat as a preprint). **[B]** Dillinger, Hübschle-Schneider, Sanders,
@@ -47,7 +47,7 @@ Overhead is measured against the information-theoretic bound `λ = log2(1/f)` bi
 * Authors' advice on width: w = 32 or 64 on a 64-bit machine; w=32 is only 15-20% faster than 64 for ~4x the
   overhead; w=128 pays "a large performance penalty for little additional gain" [B p11, p34].
 * The papers use three different ε conventions (`m=(1+ε)n` in [R §2]; `m = n/(1-ε) + w - 1` in
-  [R Thm 3.2, B §8]; `ε = 1 - m/n` in [B §11-12]). DESIGN.md defines one convention and uses it throughout.
+  [R Thm 3.2, B §8]; `ε = 1 - m/n` in [B §11-12]). [internals.md](internals.md) defines one convention and uses it throughout.
 
 ## 4. Construction algorithm (standard ribbon)
 
@@ -116,7 +116,7 @@ columns, `m` = slots; the header is ambiguous, so I read the large-`m` columns a
   `ε·w` proportional to `r` [R p5; B Lemma 12-13 p21].
 * For tiny sets, the failure and FP statements are asymptotic in `n ≫ w`. The tables start at
   `m = 2^10`. Behaviour for `n < w` is not covered by the papers (**unverified**), so v0.1 must handle small `n`
-  by measurement (DESIGN.md).
+  by measurement ([internals.md](internals.md), section 3.1).
 
 ## 6. Query path and hash requirements
 
@@ -134,7 +134,7 @@ columns, `m` = slots; the header is ambiguous, so I read the large-`m` columns a
   keys with `c(x) = 0^w` [R p3 and fn. 11; B p14].
 * Neither paper gives a concrete split of one 64-bit hash. The need is about
   `log2(m) + (w-1) + r`, e.g. 30 + 63 + 8 = 101 bits for `m = 2^30`, `w = 64`, `r = 8`, so a straight slice is
-  impossible and separate remixes are required *(inference)*. DESIGN.md specifies ours.
+  impossible and separate remixes are required *(inference)*. [internals.md](internals.md), section 3.2, specifies ours.
 * Standard ribbon has FP = 2^-r only if `b(y)` is independent of `(s(y), c(y))` and of the stored
   equations [R §2 p3]. Any correlation between the fingerprint bits and the start/coefficient bits breaks the
   guarantee. Our statistical FP tests guard against that.
