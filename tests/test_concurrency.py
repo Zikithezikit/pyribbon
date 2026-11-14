@@ -61,8 +61,11 @@ def test_eight_threads_query_one_shared_filter(how: str) -> None:
     def worker(index: int) -> tuple[int, int]:
         barrier.wait()
         deadline = time.monotonic() + DURATION
+        hard_stop = deadline + 60.0  # only a hang gets here
         loops = bad = 0
-        while time.monotonic() < deadline:
+        # Run for DURATION, and past it until three loops are done: the slowest path (one GIL-held probe per key) can
+        # manage fewer in DURATION on a busy machine or a coverage build, which says nothing about the library.
+        while time.monotonic() < deadline or (loops < 3 and time.monotonic() < hard_stop):
             if index % 3 == 0:
                 got = [k in shared for k in probes]  # GIL held for every probe
             elif index % 3 == 1:
@@ -80,7 +83,7 @@ def test_eight_threads_query_one_shared_filter(how: str) -> None:
     with ThreadPoolExecutor(THREADS) as pool:
         results = list(pool.map(worker, range(THREADS)))
     assert [bad for _, bad in results] == [0] * THREADS, results
-    assert all(loops >= 3 for loops, _ in results), results  # every thread really ran for the whole period
+    assert all(loops >= 3 for loops, _ in results), results  # every thread really ran
 
 
 @pytest.mark.usefixtures("fast_thread_switching")

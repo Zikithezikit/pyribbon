@@ -51,8 +51,11 @@ def test_many_threads_query_build_and_load_at_once() -> None:
     def worker(index: int) -> int:
         barrier.wait()
         deadline = time.monotonic() + DURATION
+        hard_stop = deadline + 60.0  # only a hang gets here
         rounds = 0
-        while time.monotonic() < deadline:
+        # Run for DURATION, and past it until all six kinds of operation have run: a busy machine may not manage that
+        # in DURATION, which says nothing about the library.
+        while time.monotonic() < deadline or (rounds < 6 and time.monotonic() < hard_stop):
             kind = (index + rounds) % 6
             if kind == 0:
                 assert [k in shared for k in probes] == expected
