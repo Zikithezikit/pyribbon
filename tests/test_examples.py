@@ -72,3 +72,12 @@ def test_errors_output() -> None:
 def test_threads_output() -> None:
     first, second, same = run("07_threads.py")[0].split()
     assert first == second and same == "True"
+
+
+def test_width_output() -> None:
+    lines = run("08_width.py")
+    rows = [line.split() for line in lines[1:-1]]
+    assert [(r[0], r[1]) for r in rows] == [(f"{n:,}", w) for n in (10_000, 100_000, 1_000_000) for w in ("64", "128")]
+    for narrow, wide in zip(rows[::2], rows[1::2], strict=True):
+        assert float(wide[2]) < float(narrow[2])  # width 128 is smaller at every size shown
+    assert lines[-1] == "W128"
