@@ -36,9 +36,12 @@ def test_importing_the_extension_does_not_enable_the_gil() -> None:
     assert done.returncode == 0, done.stderr
 
 
-def test_many_threads_query_build_and_load_at_once() -> None:
+@pytest.mark.parametrize("width", [64, 128])
+def test_many_threads_query_build_and_load_at_once(width: int) -> None:
     members = [*range(40_000), b"k1", "s1é", 2**80]
-    shared = RibbonFilter(members, fp_bits=4, seed=3)  # fp_bits=4: about 6% false positives, so both answers occur
+    shared = RibbonFilter(
+        members, fp_bits=4, seed=3, width=width
+    )  # fp_bits=4: about 6% false positives, so both answers occur
     blob = shared.to_bytes()
     loaded = RibbonFilter.from_buffer(blob)
     probes: list[Any] = [*range(0, 80_000, 7), b"k1", b"nope", "s1é", "x", 2**80, 2**81]
@@ -67,7 +70,7 @@ def test_many_threads_query_build_and_load_at_once() -> None:
                 other = RibbonFilter.from_buffer(blob, verify=bool(rounds % 2))  # many views of one bytes object
                 assert other.to_bytes() == blob and all(m in other for m in members[:300])
             elif kind == 4:
-                built = RibbonFilter(members[:20_000], fp_bits=4, seed=3 + index)  # concurrent builds
+                built = RibbonFilter(members[:20_000], fp_bits=4, seed=3 + index, width=width)  # concurrent builds
                 assert all(built.contains_many(members[:20_000]))
                 assert len(built) == 20_000
             else:
@@ -81,10 +84,11 @@ def test_many_threads_query_build_and_load_at_once() -> None:
     assert all(r >= 6 for r in rounds), rounds  # every thread ran every kind of operation
 
 
-def test_dropping_filters_that_other_threads_are_probing() -> None:
+@pytest.mark.parametrize("width", [64, 128])
+def test_dropping_filters_that_other_threads_are_probing(width: int) -> None:
     """A probe holds a reference to its filter, so the last owner letting go mid-probe cannot free it."""
     members = list(range(30_000))
-    blob = RibbonFilter(members, seed=1).to_bytes()
+    blob = RibbonFilter(members, seed=1, width=width).to_bytes()
     slot: list[RibbonFilter] = [RibbonFilter.from_buffer(blob)]
     stop = threading.Event()
     barrier = threading.Barrier(THREADS)

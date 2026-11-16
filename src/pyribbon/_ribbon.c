@@ -168,10 +168,14 @@ static int hashvec_push(HashVec *hv, uint64_t h) {
   return 0;
 }
 
+/* str, bytes, bytearray and memoryview are single keys, never collections of keys. */
+static int is_single_key(PyObject *obj) {
+  return PyUnicode_Check(obj) || PyBytes_Check(obj) || PyByteArray_Check(obj) || PyObject_TypeCheck(obj, &PyMemoryView_Type);
+}
+
 /* A lone str/bytes would silently iterate its characters/ints: almost certainly a bug, so refuse it. */
 static int reject_single_key(PyObject *keys, const char *what) {
-  if (PyUnicode_Check(keys) || PyBytes_Check(keys) || PyByteArray_Check(keys) ||
-      PyObject_TypeCheck(keys, &PyMemoryView_Type)) {
+  if (is_single_key(keys)) {
     PyObject *name = type_name_of(keys);
     if (name) {
       PyErr_Format(PyExc_TypeError, "%s must be an iterable of keys, not a single %U (wrap it in a list)", what, name);
@@ -244,9 +248,7 @@ static void hash_int_array(const unsigned char *data, size_t count, int size, in
 }
 
 static int collect_int_array(PyObject *keys, uint64_t seed, HashVec *hv) {
-  if (PyUnicode_Check(keys) || PyBytes_Check(keys) || PyByteArray_Check(keys) ||
-      PyObject_TypeCheck(keys, &PyMemoryView_Type) || !PyObject_CheckBuffer(keys))
-    return 0;
+  if (is_single_key(keys) || !PyObject_CheckBuffer(keys)) return 0;
   Py_buffer view;
   if (PyObject_GetBuffer(keys, &view, PyBUF_FORMAT | PyBUF_C_CONTIGUOUS) < 0) {
     /* A strided numpy slice (ValueError), a non-contiguous view (BufferError), an object that exports no buffer
@@ -334,11 +336,11 @@ static PyObject *raise_status(ModState *st, rb_status status) {
 /* RibbonFilter                                                                                      */
 
 static PyObject *Filter_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
-  static char *kwlist[] = {"keys", "fp_bits", "seed", "overhead", "max_attempts", NULL};
+  static char *kwlist[] = {"keys", "fp_bits", "seed", "overhead", "max_attempts", "width", NULL};
   PyObject *keys, *seed_obj = NULL, *overhead_obj = NULL;
-  int fp_bits = (int)RB_DEFAULT_FP_BITS, max_attempts = (int)RB_DEFAULT_MAX_ATTEMPTS;
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|$iOOi:RibbonFilter", kwlist, &keys, &fp_bits, &seed_obj,
-                                   &overhead_obj, &max_attempts))
+  int fp_bits = (int)RB_DEFAULT_FP_BITS, max_attempts = (int)RB_DEFAULT_MAX_ATTEMPTS, width = (int)RB_WIDTH_64;
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|$iOOii:RibbonFilter", kwlist, &keys, &fp_bits, &seed_obj,
+                                   &overhead_obj, &max_attempts, &width))
     return NULL;
   ModState *st = state_of_type(type);
   if (!st) return NULL;
@@ -348,6 +350,10 @@ static PyObject *Filter_new(PyTypeObject *type, PyObject *args, PyObject *kwds) 
   }
   if (max_attempts < 1 || max_attempts > (int)RB_MAX_ATTEMPTS) {
     PyErr_Format(PyExc_ValueError, "max_attempts must be between 1 and %u, got %d", RB_MAX_ATTEMPTS, max_attempts);
+    return NULL;
+  }
+  if (width != (int)RB_WIDTH_64 && width != (int)RB_WIDTH_128) {
+    PyErr_Format(PyExc_ValueError, "width must be %u or %u, got %d", RB_WIDTH_64, RB_WIDTH_128, width);
     return NULL;
   }
   uint64_t seed = 0;
@@ -384,6 +390,7 @@ static PyObject *Filter_new(PyTypeObject *type, PyObject *args, PyObject *kwds) 
   params.max_attempts = (uint32_t)max_attempts;
   params.overhead = overhead;
   params.seed = seed;
+  params.width = (uint32_t)width;
   rb_filter *filter = NULL;
   rb_status status;
   Py_BEGIN_ALLOW_THREADS
@@ -544,8 +551,9 @@ static PyObject *Filter_reduce(PyObject *obj, PyObject *Py_UNUSED(ignored)) {
 static PyObject *Filter_repr(PyObject *obj) {
   rb_filter *f = ((FilterObject *)obj)->filter;
   if (!f) return PyUnicode_FromString("RibbonFilter(<released>)");
-  return PyUnicode_FromFormat("RibbonFilter(keys=%llu, fp_bits=%u, size_in_bytes=%zu)",
-                              (unsigned long long)rb_num_keys(f), rb_fp_bits(f), rb_serialized_size(f));
+  return PyUnicode_FromFormat("RibbonFilter(keys=%llu, fp_bits=%u, width=%u, size_in_bytes=%zu)",
+                              (unsigned long long)rb_num_keys(f), rb_fp_bits(f), (unsigned)rb_width(f),
+                              rb_serialized_size(f));
 }
 
 static PyObject *Filter_get_size_in_bytes(PyObject *obj, void *Py_UNUSED(closure)) {
@@ -556,6 +564,21 @@ static PyObject *Filter_get_size_in_bytes(PyObject *obj, void *Py_UNUSED(closure
 static PyObject *Filter_get_fp_bits(PyObject *obj, void *Py_UNUSED(closure)) {
   rb_filter *f = filter_of(obj);
   return f ? PyLong_FromUnsignedLong(rb_fp_bits(f)) : NULL;
+}
+
+/* The width as a pyribbon.Width member. The enum lives in Python (pyribbon/_width.py), so it is looked up per call: the
+ * module is already imported, and this property is not a hot path. */
+static PyObject *Filter_get_width(PyObject *obj, void *Py_UNUSED(closure)) {
+  rb_filter *f = filter_of(obj);
+  if (!f) return NULL;
+  PyObject *module = PyImport_ImportModule("pyribbon._width");
+  if (!module) return NULL;
+  PyObject *width_type = PyObject_GetAttrString(module, "Width");
+  Py_DECREF(module);
+  if (!width_type) return NULL;
+  PyObject *result = PyObject_CallFunction(width_type, "I", (unsigned int)rb_width(f));
+  Py_DECREF(width_type);
+  return result;
 }
 
 static PyObject *Filter_get_bits_per_key(PyObject *obj, void *Py_UNUSED(closure)) {
@@ -583,11 +606,12 @@ static PyGetSetDef Filter_getset[] = {
     {"size_in_bytes", Filter_get_size_in_bytes, NULL, "Length of the serialized filter in bytes, header included.", NULL},
     {"bits_per_key", Filter_get_bits_per_key, NULL, "8 * size_in_bytes / len(filter); 0.0 for an empty filter.", NULL},
     {"fp_bits", Filter_get_fp_bits, NULL, "Fingerprint bits r: the false-positive rate is about 2**-r.", NULL},
+    {"width", Filter_get_width, NULL, "Ribbon width, a pyribbon.Width member: a wider ribbon needs fewer bits per key but builds slower.", NULL},
     {NULL, NULL, NULL, NULL, NULL}};
 
 static PyType_Slot Filter_slots[] = {
     {Py_tp_doc,
-     (void *)"RibbonFilter(keys, *, fp_bits=8, seed=0, overhead=None, max_attempts=32)\n--\n\n"
+     (void *)"RibbonFilter(keys, *, fp_bits=8, seed=0, overhead=None, max_attempts=32, width=64)\n--\n\n"
              "An immutable approximate-membership filter (standard ribbon filter).\n\n"
              "Build it from an iterable of keys (bytes, bytearray, memoryview, str or int), or from a 1-D integer buffer such as\n"
              "an array.array or numpy array (hashed in C, same result as the ints one by one). `key in filter` never gives a\n"

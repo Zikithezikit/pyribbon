@@ -27,6 +27,7 @@ from pyribbon import ConstructionError, RibbonFilter
 
 THREADS = 8
 DURATION = 3.0
+WIDTHS = [64, 128]
 
 
 @pytest.fixture
@@ -48,9 +49,10 @@ def _mixed_probes() -> list[Any]:
 
 
 @pytest.mark.parametrize("how", ["built", "loaded"])
+@pytest.mark.parametrize("width", WIDTHS)
 @pytest.mark.usefixtures("fast_thread_switching")
-def test_eight_threads_query_one_shared_filter(how: str) -> None:
-    built = RibbonFilter([*range(50_000), b"k7", "s7é", 2**80], fp_bits=4, seed=5)  # fp_bits=4: ~6% false positives
+def test_eight_threads_query_one_shared_filter(how: str, width: int) -> None:
+    built = RibbonFilter([*range(50_000), b"k7", "s7é", 2**80], fp_bits=4, seed=5, width=width)  # ~6% false positives
     blob = built.to_bytes()
     shared = built if how == "built" else RibbonFilter.from_buffer(blob)  # "loaded": zero copy over a shared buffer
     probes = _mixed_probes()
@@ -86,11 +88,12 @@ def test_eight_threads_query_one_shared_filter(how: str) -> None:
     assert all(loops >= 3 for loops, _ in results), results  # every thread really ran
 
 
+@pytest.mark.parametrize("width", WIDTHS)
 @pytest.mark.usefixtures("fast_thread_switching")
-def test_replacing_a_filter_while_other_threads_query_it() -> None:
+def test_replacing_a_filter_while_other_threads_query_it(width: int) -> None:
     """A query holds a reference to its filter, so dropping the owner's reference mid-query cannot free it."""
     members = list(range(20_000))
-    holder: dict[str, RibbonFilter] = {"f": RibbonFilter(members, seed=0)}
+    holder: dict[str, RibbonFilter] = {"f": RibbonFilter(members, seed=0, width=width)}
     stop = threading.Event()
     barrier = threading.Barrier(5)
     progress = [0] * 5  # one slot per thread, written only by that thread
@@ -111,7 +114,9 @@ def test_replacing_a_filter_while_other_threads_query_it() -> None:
         seed = 0
         while not stop.is_set():
             seed += 1
-            holder["f"] = RibbonFilter(members, seed=seed)  # drops the previous filter while readers may be inside it
+            holder["f"] = RibbonFilter(
+                members, seed=seed, width=width
+            )  # drops the previous filter while readers may be inside it
             progress[4] = seed
         return seed
 
@@ -127,11 +132,12 @@ def test_replacing_a_filter_while_other_threads_query_it() -> None:
     assert all(r >= 1 for r in rounds), rounds
 
 
-def test_threads_build_different_filters_concurrently() -> None:
+@pytest.mark.parametrize("width", WIDTHS)
+def test_threads_build_different_filters_concurrently(width: int) -> None:
     def spec(i: int) -> tuple[list[Any], dict[str, Any]]:
         lo = i * 400_000
         keys: list[Any] = list(range(lo, lo + 200_000)) if i % 2 == 0 else [f"key-{j}" for j in range(lo, lo + 200_000)]
-        return keys, {"fp_bits": 1 + (i * 5) % 32, "seed": i * 2**59 + 3}
+        return keys, {"fp_bits": 1 + (i * 5) % 32, "seed": i * 2**59 + 3, "width": width}
 
     specs = [spec(i) for i in range(THREADS)]
     # sequential reference: builds are deterministic, so the concurrent results must be byte-identical
@@ -147,7 +153,7 @@ def test_threads_build_different_filters_concurrently() -> None:
             f = RibbonFilter(keys, **kw)
             ok.append(f.to_bytes() == expected[i] and all(f.contains_many(keys)))
             try:  # failures in one thread must not disturb the others
-                RibbonFilter(keys, overhead=0.0, max_attempts=1)
+                RibbonFilter(keys, overhead=0.0, max_attempts=1, width=width)
                 ok.append(False)
             except ConstructionError:
                 ok.append(True)

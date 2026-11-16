@@ -55,6 +55,8 @@ _SPECS: dict[str, tuple[list[Any], dict[str, Any]]] = {
     "n400_r8": (list(range(400)), {}),
     "n300_r32": (list(range(300)), {"fp_bits": 32, "seed": 2**64 - 1}),
     "n1000_r16": ([f"k{i}" for i in range(1000)], {"fp_bits": 16, "seed": 77}),
+    "n400_w128": (list(range(400)), {"width": 128}),
+    "n300_r5_w128": ([f"k{i}" for i in range(300)], {"fp_bits": 5, "seed": 9, "width": 128}),
 }
 MEMBERS = {name: keys for name, (keys, _) in _SPECS.items()}
 BLOBS: dict[str, bytes] = {name: RibbonFilter(keys, **kw).to_bytes() for name, (keys, kw) in _SPECS.items()}
@@ -76,12 +78,12 @@ def with_fields(blob: bytes, *, fix_header: bool = True, fix_payload: bool = Fal
 
 
 def hand_built(
-    rows: int, r: int, num_keys: int = 1, seed: int = 5, attempt: int = 0, payload: bytes | None = None
+    rows: int, r: int, num_keys: int = 1, seed: int = 5, attempt: int = 0, payload: bytes | None = None, width: int = 64
 ) -> bytes:
     """A syntactically valid filter with an arbitrary payload (its answers mean nothing; its header is valid)."""
     if payload is None:
         payload = random.Random(rows * 33 + r).randbytes(rows // 64 * r * 8)
-    return ref.serialize(num_keys, rows, r, seed, attempt, payload)
+    return ref.serialize(num_keys, rows, r, seed, attempt, payload, width)
 
 
 def c_outcome(buf: Any, verify: bool = True) -> tuple[str | None, RibbonFilter | None]:
@@ -261,7 +263,7 @@ _FIELD_CASES: list[tuple[str, dict[str, int | bytes], str]] = [
     ("fp_bits 7 leaves trailing bytes", {"fp_bits": 7}, "FORMAT"),
     ("fp_bits 9 needs more payload", {"fp_bits": 9}, "TRUNCATED"),
     ("fp_bits 32, rows 2**40", {"fp_bits": 32, "num_rows": 2**40}, "TRUNCATED"),
-    *((f"width_log2 {w}", {"width_log2": w}, "FORMAT") for w in (0, 5, 7, 8, 255)),
+    *((f"width_log2 {w}", {"width_log2": w}, "FORMAT") for w in (0, 5, 8, 255)),
     *((f"hash_id {h}", {"hash_id": h}, "FORMAT") for h in (0, 2, 255)),
     *((f"flags {fl:#x}", {"flags": fl}, "FORMAT") for fl in (1, 2, 0x80, 255)),
     *((f"reserved {rv:#x}", {"reserved": rv}, "FORMAT") for rv in (1, 0x100, 2**31, 2**32 - 1)),
@@ -285,6 +287,15 @@ def test_hostile_header_is_rejected_with_the_right_status(
     hostile = with_fields(_BASE, **fields)
     assert c_outcome(hostile, verify) == (status, None)
     assert check_agreement(hostile, verify) == status
+
+
+@pytest.mark.parametrize("rows", [64, 128, 192])
+def test_width_128_needs_at_least_256_rows(rows: int) -> None:
+    """The minimum table is twice the width, so a 128-row body is a valid width-64 filter and an invalid width-128 one."""
+    wide = hand_built(rows, 8, width=128)
+    assert c_outcome(wide) == ("FORMAT", None)
+    assert check_agreement(wide) == "FORMAT"
+    assert (rows < 128) == (check_agreement(hand_built(rows, 8)) == "FORMAT")
 
 
 @pytest.mark.parametrize("field", [f for f in FIELDS if f not in ("magic", "header_xxh3")])  # magic is checked first
@@ -317,6 +328,8 @@ _VALID_CASES: list[tuple[str, bytes]] = [
     *((f"attempt {v}", with_fields(_BASE, attempt=v)) for v in (1, 31, 255, 2**31, 2**32 - 1)),
     ("128 rows, 32 bits", hand_built(128, 32)),
     ("192 rows, 1 bit", hand_built(192, 1)),
+    ("256 rows, 8 bits, width 128", hand_built(256, 8, width=128)),
+    ("320 rows, 32 bits, width 128", hand_built(320, 32, width=128)),
     ("2**17 rows, 5 bits", hand_built(2**17, 5)),
     ("2**20 rows, 1 bit", hand_built(2**20, 1)),
     ("empty filter", hand_built(0, 8, num_keys=0)),
