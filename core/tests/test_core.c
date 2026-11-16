@@ -20,6 +20,13 @@ static int g_checks, g_failed;
 #define CHECK_EQ(a, b) CHECK((a) == (b))
 
 /* xorshift64* test PRNG (deterministic) */
+static uint32_t g_width = RB_WIDTH_64; /* the width the width-sensitive tests build with; main runs them for each */
+static rb_params test_params(void) {
+  rb_params p = rb_params_default();
+  p.width = (rb_width_kind)g_width;
+  return p;
+}
+
 static uint64_t g_rng = 0x2545F4914F6CDD1Dull;
 static uint64_t rnd(void) {
   g_rng ^= g_rng >> 12;
@@ -99,12 +106,15 @@ static void test_vectors_hash(void) {
     CHECK_EQ(rb_hash_i64(vec_i64_tbl[i].value, vec_i64_tbl[i].seed), vec_i64_tbl[i].hash);
   for (size_t i = 0; i < sizeof vec_derive_tbl / sizeof *vec_derive_tbl; i++) {
     const vec_derive *v = &vec_derive_tbl[i];
-    rb_eq eq = rb_derive(v->h, rb_attempt_salt(v->attempt), v->rows - 63u, v->r);
+    uint64_t salt = rb_attempt_salt(v->attempt);
+    rb_eq eq = rb_derive(v->h, salt, v->rows - v->width + 1u, v->r);
     CHECK_EQ(eq.start, v->start);
     CHECK_EQ(eq.coeff, v->coeff);
     CHECK_EQ(eq.fp, v->fp);
-    CHECK(eq.start <= v->rows - 64u);
+    CHECK(eq.start <= v->rows - v->width);
     CHECK(eq.coeff & 1u);
+    if (v->width == RB_WIDTH_128) CHECK_EQ(rb_derive_coeff_hi(v->h, salt), v->coeff_hi);
+    else CHECK_EQ(v->coeff_hi, 0u);
   }
   /* key kinds are distinct keys */
   CHECK(rb_hash_bytes("a", 1, 0, RB_KEY_BYTES) != rb_hash_bytes("a", 1, 0, RB_KEY_STR));
@@ -121,6 +131,7 @@ static void test_vectors_filters(void) {
     p.fp_bits = v->r;
     p.seed = v->seed;
     p.overhead = v->overhead;
+    p.width = v->width;
     rb_filter *f = NULL;
     rb_build_info info;
     CHECK_EQ(rb_build(h, v->n, &p, &f, &info), RB_OK);
@@ -151,7 +162,7 @@ static void test_vectors_filters(void) {
 /* ---- no false negatives across sizes and parameters ---- */
 static void build_and_check(size_t n, uint32_t r, uint64_t seed, double overhead) {
   uint64_t *h = make_hashes(n, seed, 0);
-  rb_params p = rb_params_default();
+  rb_params p = test_params();
   p.fp_bits = r;
   p.seed = seed;
   p.overhead = overhead;
@@ -170,7 +181,9 @@ static void build_and_check(size_t n, uint32_t r, uint64_t seed, double overhead
     free(out);
     CHECK_EQ(rb_num_keys(f), n);
     CHECK_EQ(rb_fp_bits(f), r);
-    CHECK(n == 0 ? rb_num_rows(f) == 0 : (rb_num_rows(f) % 64 == 0 && rb_num_rows(f) >= 128 && rb_num_rows(f) >= n));
+    CHECK_EQ(rb_width(f), g_width);
+    CHECK(n == 0 ? rb_num_rows(f) == 0
+                 : (rb_num_rows(f) % 64 == 0 && rb_num_rows(f) >= 2 * g_width && rb_num_rows(f) >= n));
     rb_free(f);
   }
   free(h);
@@ -190,7 +203,8 @@ static void test_duplicates(void) {
   uint64_t *base = make_hashes(n, 0, 0);
   for (size_t i = 0; i < n; i++) h[i] = h[n + i] = h[2 * n + i] = base[i]; /* every key three times */
   rb_filter *f = NULL;
-  CHECK_EQ(rb_build(h, 3 * n, NULL, &f, NULL), RB_OK);
+  rb_params p = test_params();
+  CHECK_EQ(rb_build(h, 3 * n, &p, &f, NULL), RB_OK);
   if (f) {
     for (size_t i = 0; i < n; i++) CHECK(rb_contains(f, base[i]));
     CHECK_EQ(rb_num_keys(f), 3 * n); /* inputs counted, duplicates included */
@@ -199,7 +213,7 @@ static void test_duplicates(void) {
   /* n identical hashes: a single distinct equation */
   uint64_t same[500];
   for (int i = 0; i < 500; i++) same[i] = base[7];
-  CHECK_EQ(rb_build(same, 500, NULL, &f, NULL), RB_OK);
+  CHECK_EQ(rb_build(same, 500, &p, &f, NULL), RB_OK);
   if (f) {
     CHECK(rb_contains(f, base[7]));
     rb_free(f);
@@ -211,7 +225,7 @@ static void test_duplicates(void) {
 static void test_failure_is_reported(void) {
   /* overhead 0 and one attempt cannot succeed for 100k keys: must fail cleanly, never return a filter */
   uint64_t *h = make_hashes(100000, 0, 0);
-  rb_params p = rb_params_default();
+  rb_params p = test_params();
   p.overhead = 0.0;
   p.max_attempts = 1;
   rb_filter *f = (rb_filter *)0x1;
@@ -255,7 +269,7 @@ static void test_param_validation(void) {
 /* ---- the sizing table is integer arithmetic and must match the Python reference exactly ---- */
 static void test_default_overhead_ppm_vectors(void) {
   for (size_t i = 0; i < sizeof vec_ppm_tbl / sizeof *vec_ppm_tbl; i++)
-    CHECK_EQ((uint64_t)(rb_default_overhead(vec_ppm_tbl[i].n) * 1e6 + 0.5), vec_ppm_tbl[i].ppm);
+    CHECK_EQ((uint64_t)(rb_default_overhead_width(vec_ppm_tbl[i].n, vec_ppm_tbl[i].width) * 1e6 + 0.5), vec_ppm_tbl[i].ppm);
 }
 
 /* ---- default overhead table ---- */
@@ -292,7 +306,7 @@ static void test_seed_independence(void) {
     else j++;
   }
   CHECK_EQ(common, 0u);
-  rb_params p = rb_params_default();
+  rb_params p = test_params();
   p.fp_bits = 4;
   rb_filter *fa = NULL, *fb = NULL;
   p.seed = 0;
@@ -322,7 +336,7 @@ static void test_fpr(void) {
   for (size_t t = 0; t < sizeof rs / sizeof *rs; t++) {
     uint32_t r = rs[t];
     uint64_t *h = make_hashes(n, 11, 0);
-    rb_params p = rb_params_default();
+    rb_params p = test_params();
     p.fp_bits = r;
     p.seed = 11;
     rb_filter *f = NULL;
@@ -347,7 +361,7 @@ static void test_roundtrip_and_view(void) {
   for (size_t s = 0; s < sizeof sizes / sizeof *sizes; s++) {
     size_t n = sizes[s];
     uint64_t *h = make_hashes(n, 5, 0);
-    rb_params p = rb_params_default();
+    rb_params p = test_params();
     p.seed = 5;
     p.fp_bits = 9;
     rb_filter *f = NULL;
@@ -400,7 +414,7 @@ static rb_status load(const uint8_t *buf, size_t len, int verify) {
 
 static void test_loader_hostile(void) {
   uint64_t *h = make_hashes(300, 3, 0);
-  rb_params p = rb_params_default();
+  rb_params p = test_params();
   p.seed = 3;
   rb_filter *f = NULL;
   CHECK_EQ(rb_build(h, 300, &p, &f, NULL), RB_OK);
@@ -438,7 +452,7 @@ static void test_loader_hostile(void) {
   }
   /* specific classes, with the header checksum repaired so the field rules are what rejects them */
   struct { size_t off; uint8_t val; rb_status want; } tweaks[] = {
-      {8, 2, RB_E_VERSION}, {10, 65, RB_E_FORMAT}, {12, 7, RB_E_FORMAT}, {13, 0, RB_E_FORMAT},
+      {8, 2, RB_E_VERSION}, {10, 65, RB_E_FORMAT}, {12, 8, RB_E_FORMAT}, {12, 5, RB_E_FORMAT}, {13, 0, RB_E_FORMAT},
       {13, 33, RB_E_FORMAT}, {14, 2, RB_E_FORMAT}, {15, 1, RB_E_FORMAT}, {44, 1, RB_E_FORMAT},
   };
   for (size_t t = 0; t < sizeof tweaks / sizeof *tweaks; t++) {
@@ -508,6 +522,72 @@ static void test_strerror(void) {
   CHECK(strcmp(rb_strerror((rb_status)(RB_E_CHECKSUM + 1)), "unknown status") == 0);
 }
 
+/* ---- the width parameter: validation, what the header says, the minimum table, the sizing table ---- */
+static void test_width_validation(void) {
+  uint64_t *h = make_hashes(1000, 0, 0);
+  rb_filter *f = NULL;
+  rb_params p = rb_params_default();
+  CHECK_EQ(p.width, RB_WIDTH_64);
+  CHECK_EQ(rb_build(h, 1000, &p, &f, NULL), RB_OK);
+  CHECK_EQ(rb_width(f), RB_WIDTH_64);
+  rb_free(f);
+  const uint32_t bad[] = {0, 1, 32, 63, 65, 127, 129, 256}; /* an enum is not checked by the compiler: the library does */
+  for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
+    p.width = (rb_width_kind)bad[i];
+    f = (rb_filter *)0x1;
+    CHECK_EQ(rb_build(h, 1000, &p, &f, NULL), RB_E_INVALID_ARG);
+    CHECK(f == NULL);
+  }
+  free(h);
+}
+
+static void test_width_header_and_minimum_table(void) {
+  uint64_t *h = make_hashes(1000, 0, 0);
+  for (uint32_t w = RB_WIDTH_64; w <= RB_WIDTH_128; w *= 2u) {
+    rb_params p = rb_params_default();
+    p.width = (rb_width_kind)w;
+    rb_filter *f = NULL;
+    CHECK_EQ(rb_build(h, 1000, &p, &f, NULL), RB_OK);
+    size_t size = rb_serialized_size(f);
+    uint8_t *buf = (uint8_t *)malloc(size);
+    CHECK_EQ(rb_serialize(f, buf, size), RB_OK);
+    CHECK_EQ(buf[12], w == RB_WIDTH_64 ? 6 : 7); /* width_log2 */
+    free(buf);
+    rb_free(f);
+    CHECK_EQ(rb_build(h, 1, &p, &f, NULL), RB_OK);
+    CHECK_EQ(rb_num_rows(f), 2u * w); /* one key: the minimum table is twice the width */
+    rb_free(f);
+  }
+  free(h);
+}
+
+/* A width-128 filter needs at least 256 rows, so a header with 192 rows and a payload of exactly that length is rejected. */
+static void test_width_128_loader_minimum_rows(void) {
+  const size_t rows = 192, fp_bits = 8, payload_len = rows / 64 * fp_bits * 8;
+  uint64_t *h = make_hashes(10, 0, 0);
+  rb_params p = rb_params_default();
+  p.width = RB_WIDTH_128;
+  rb_filter *f = NULL;
+  CHECK_EQ(rb_build(h, 10, &p, &f, NULL), RB_OK);
+  size_t size = rb_serialized_size(f);
+  uint8_t *good = (uint8_t *)malloc(size), *small = (uint8_t *)calloc(RB_HEADER_SIZE + payload_len, 1);
+  CHECK_EQ(rb_serialize(f, good, size), RB_OK);
+  memcpy(small, good, RB_HEADER_SIZE);
+  rb_store_le64(small + 16, 10);   /* num_keys */
+  rb_store_le64(small + 24, rows); /* num_rows */
+  fix_header_checksum(small);
+  CHECK_EQ(load(small, RB_HEADER_SIZE + payload_len, 0), RB_E_FORMAT);
+  free(small);
+  free(good);
+  rb_free(f);
+  free(h);
+}
+
+static void test_default_overhead_by_width(void) {
+  CHECK(rb_default_overhead_width(100000, RB_WIDTH_128) < rb_default_overhead_width(100000, RB_WIDTH_64));
+  CHECK(rb_default_overhead_width(100000, RB_WIDTH_64) == rb_default_overhead(100000));
+}
+
 /* ---- sizes beyond the supported range are refused before anything is allocated or read ---- */
 static void test_too_large(void) {
 #if SIZE_MAX > UINT32_MAX
@@ -515,7 +595,7 @@ static void test_too_large(void) {
   rb_filter *f = (rb_filter *)0x1;
   CHECK_EQ(rb_build(&dummy, (size_t)(RB_MAX_KEYS + 1u), NULL, &f, NULL), RB_E_TOO_LARGE);
   CHECK(f == NULL);
-  rb_params p = rb_params_default();
+  rb_params p = test_params();
   p.overhead = 4.0; /* RB_MAX_KEYS keys at 5x the rows is 2^40.3 rows: over RB_MAX_ROWS */
   f = (rb_filter *)0x1;
   CHECK_EQ(rb_build(&dummy, (size_t)RB_MAX_KEYS, &p, &f, NULL), RB_E_TOO_LARGE);
@@ -576,7 +656,7 @@ static void test_insertion_order_does_not_change_the_filter(void) {
     uint64_t *h = make_hashes(sizes[si], 7, 1000);
     for (size_t bi = 0; bi < sizeof bits / sizeof *bits; bi++) {
       if (sizes[si] == 300000 && bi != 1) continue;
-      rb_params p = rb_params_default();
+      rb_params p = test_params();
       p.fp_bits = bits[bi];
       p.seed = si;
       same_filter_in_every_mode(h, sizes[si], &p, 0, 1);
@@ -584,12 +664,13 @@ static void test_insertion_order_does_not_change_the_filter(void) {
     free(h);
   }
   /* automatic choice (above 2^18 rows the bucketed path) against arrival order */
+  rb_params dflt = test_params();
   uint64_t *big = make_hashes(300000, 3, 0);
-  same_filter_in_every_mode(big, 300000, NULL, -1, 0);
+  same_filter_in_every_mode(big, 300000, &dflt, -1, 0);
   free(big);
   /* failures and retries with growth: tight overhead, one attempt and the default budget */
   uint64_t *h = make_hashes(50000, 5, 0);
-  rb_params p = rb_params_default();
+  rb_params p = test_params();
   p.overhead = 0.0;
   p.max_attempts = 1;
   same_filter_in_every_mode(h, 50000, &p, 0, 1);
@@ -600,11 +681,11 @@ static void test_insertion_order_does_not_change_the_filter(void) {
   /* duplicate keys and keys in descending order */
   uint64_t *d = (uint64_t *)malloc(60000 * sizeof *d);
   for (size_t i = 0; i < 60000; i++) d[i] = h[(59999 - i) % 20000];
-  same_filter_in_every_mode(d, 60000, NULL, 0, 1);
+  same_filter_in_every_mode(d, 60000, &dflt, 0, 1);
   free(d);
   free(h);
   /* n = 0 */
-  same_filter_in_every_mode(NULL, 0, NULL, 0, 1);
+  same_filter_in_every_mode(NULL, 0, &dflt, 0, 1);
 }
 
 int main(void) {
@@ -620,17 +701,25 @@ int main(void) {
   test_bitops();
   test_vectors_hash();
   test_vectors_filters();
-  test_no_false_negatives();
-  test_duplicates();
-  test_failure_is_reported();
-  test_insertion_order_does_not_change_the_filter();
   test_param_validation();
   test_default_overhead();
   test_default_overhead_ppm_vectors();
-  test_seed_independence();
-  test_fpr();
-  test_roundtrip_and_view();
-  test_loader_hostile();
+  for (g_width = RB_WIDTH_64; g_width <= RB_WIDTH_128; g_width *= 2u) {
+    printf("width %u\n", g_width);
+    test_no_false_negatives();
+    test_duplicates();
+    test_failure_is_reported();
+    test_insertion_order_does_not_change_the_filter();
+    test_seed_independence();
+    test_fpr();
+    test_roundtrip_and_view();
+    test_loader_hostile();
+  }
+  g_width = RB_WIDTH_64;
+  test_width_validation();
+  test_width_header_and_minimum_table();
+  test_width_128_loader_minimum_rows();
+  test_default_overhead_by_width();
   test_strerror();
   test_too_large();
   test_api_arguments();

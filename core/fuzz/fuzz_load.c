@@ -52,12 +52,13 @@ static uint64_t rnd(void) {
   return g_state;
 }
 
-static uint8_t *seed_filter(size_t n, uint32_t r, size_t *len) {
+static uint8_t *seed_filter(size_t n, uint32_t r, rb_width_kind width, size_t *len) {
   uint64_t *h = (uint64_t *)malloc((n ? n : 1) * sizeof *h);
   for (size_t i = 0; i < n; i++) h[i] = rb_hash_i64((int64_t)i, 1);
   rb_params p = rb_params_default();
   p.fp_bits = r;
   p.seed = 1;
+  p.width = width;
   rb_filter *f = NULL;
   if (rb_build(h, n, &p, &f, NULL) != RB_OK) abort();
   *len = rb_serialized_size(f);
@@ -70,14 +71,16 @@ static uint8_t *seed_filter(size_t n, uint32_t r, size_t *len) {
 
 int main(int argc, char **argv) {
   unsigned long iters = argc > 1 ? strtoul(argv[1], NULL, 10) : 1000000ul;
-  size_t lens[4];
-  uint8_t *seeds[4] = {seed_filter(0, 8, &lens[0]), seed_filter(50, 4, &lens[1]), seed_filter(400, 8, &lens[2]),
-                       seed_filter(1000, 32, &lens[3])};
+  enum { NSEEDS = 6 };
+  size_t lens[NSEEDS];
+  uint8_t *seeds[NSEEDS] = {seed_filter(0, 8, RB_WIDTH_64, &lens[0]),    seed_filter(50, 4, RB_WIDTH_64, &lens[1]),
+                            seed_filter(400, 8, RB_WIDTH_64, &lens[2]),  seed_filter(1000, 32, RB_WIDTH_64, &lens[3]),
+                            seed_filter(400, 8, RB_WIDTH_128, &lens[4]), seed_filter(1000, 16, RB_WIDTH_128, &lens[5])};
   const uint64_t interesting[] = {0, 1, 63, 64, 65, 127, 128, 129, 0xffffffffull, 1ull << 40, (1ull << 40) + 64,
                                   1ull << 63, ~0ull, ~0ull - 63u};
   unsigned long accepted = 0;
   for (unsigned long it = 0; it < iters; it++) {
-    unsigned s = (unsigned)(rnd() % 4);
+    unsigned s = (unsigned)(rnd() % NSEEDS);
     size_t len = lens[s];
     /* worst case: 4 mutations, each of which may append up to 70 bytes (case 3 below) */
     uint8_t *buf = (uint8_t *)malloc(len + 4 * 70 + 8);
@@ -102,7 +105,7 @@ int main(int argc, char **argv) {
     free(buf);
   }
   printf("fuzz driver: %lu iterations, %lu inputs accepted by the loader, no crashes\n", iters, accepted);
-  for (int i = 0; i < 4; i++) free(seeds[i]);
+  for (int i = 0; i < NSEEDS; i++) free(seeds[i]);
   return 0;
 }
 #else

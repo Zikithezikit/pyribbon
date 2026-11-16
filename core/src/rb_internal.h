@@ -125,12 +125,16 @@ typedef struct {
 /* Per-attempt salt: depends only on the attempt index, so it is computed once per build attempt / per filter. */
 static inline uint64_t rb_attempt_salt(uint32_t attempt) { return rb_mix64(((uint64_t)attempt + 1u) * RB_GAMMA); }
 
+/* Width 128 only: the upper 64 coefficient bits (rows start + 64 .. start + 127), a fourth independent word.
+ * The lower 64 bits are rb_derive's coeff. docs/internals.md section 3.2. */
+static inline uint64_t rb_derive_coeff_hi(uint64_t hash, uint64_t salt) { return rb_mix64((hash ^ salt) + 4u * RB_GAMMA); }
+
 /* Only the start row of rb_derive (one mix instead of three), for grouping keys before insertion. */
 static inline uint64_t rb_derive_start(uint64_t hash, uint64_t salt, uint64_t num_starts) {
   return rb_mulhi64(rb_mix64((hash ^ salt) + RB_GAMMA), num_starts);
 }
 
-/* num_starts = num_rows - RB_WIDTH + 1; 1 <= r <= 32; salt = rb_attempt_salt(attempt). */
+/* num_starts = num_rows - width + 1; 1 <= r <= 32; salt = rb_attempt_salt(attempt). */
 static inline rb_eq rb_derive(uint64_t hash, uint64_t salt, uint64_t num_starts, uint32_t r) {
   uint64_t state = hash ^ salt;
   uint64_t z0 = rb_mix64(state + RB_GAMMA);

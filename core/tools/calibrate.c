@@ -2,7 +2,7 @@
  * exactly as in the library (rb_derive, rb_band_insert) until the first failure, and records the fill j/m at that
  * point. A random key set of n keys builds in one attempt iff j >= n, so the fill quantiles give the success
  * probability directly. Prints the fill at the 50th/5th/3rd/1st percentile and the overhead 1/f - 1 for each.
- * Usage: calibrate KMIN KMAX [TRIALS_BUDGET_OPS]. Single translation unit with ribbon.c on purpose (static helpers). */
+ * Usage: calibrate KMIN KMAX [TRIALS_BUDGET_OPS [WIDTH]], WIDTH 64 (default) or 128. Single translation unit with ribbon.c on purpose (static helpers). */
 #include "../src/ribbon.c"
 
 #include <stdio.h>
@@ -15,6 +15,13 @@ static int cmp_size(const void *a, const void *b) {
 int main(int argc, char **argv) {
   int kmin = argc > 1 ? atoi(argv[1]) : 7, kmax = argc > 2 ? atoi(argv[2]) : 22;
   double budget = argc > 3 ? atof(argv[3]) : 2e9;
+  uint32_t width = argc > 4 ? (uint32_t)atoi(argv[4]) : (uint32_t)RB_WIDTH_64;
+  if (width != RB_WIDTH_64 && width != RB_WIDTH_128) {
+    fprintf(stderr, "width must be 64 or 128\n");
+    return 2;
+  }
+  printf("# width %u\n", width);
+  const size_t slot_size = width == RB_WIDTH_64 ? sizeof(rb_slot) : sizeof(rb_slot128);
   printf("%3s %10s %7s %8s %8s %8s %8s   %8s %8s %8s %8s\n", "k", "m", "trials", "f50", "f05", "f03", "f01", "ovh50",
          "ovh05", "ovh03", "ovh01");
   for (int k = kmin; k <= kmax; k++) {
@@ -22,16 +29,20 @@ int main(int argc, char **argv) {
     int trials = (int)(budget / (double)m);
     if (trials > 6000) trials = 6000;
     if (trials < 300) trials = 300;
-    rb_slot *slots = (rb_slot *)calloc((size_t)m, sizeof *slots);
+    rb_slot *slots = (rb_slot *)calloc((size_t)m, slot_size);
     size_t *js = (size_t *)malloc((size_t)trials * sizeof *js);
     uint64_t state = UINT64_C(0x1234567) + (uint64_t)k;
     for (int t = 0; t < trials; t++) {
-      memset(slots, 0, (size_t)m * sizeof *slots);
+      memset(slots, 0, (size_t)m * slot_size);
       size_t j = 0;
       for (; j < m; j++) {
         state += RB_GAMMA;
-        rb_eq eq = rb_derive(rb_mix64(state), rb_attempt_salt(0), m - RB_WIDTH + 1u, 32);
-        if (!rb_band_insert(slots, eq.start, eq.coeff, eq.fp)) break;
+        uint64_t hash = rb_mix64(state), salt = rb_attempt_salt(0);
+        rb_eq eq = rb_derive(hash, salt, m - width + 1u, 32);
+        int ok = width == RB_WIDTH_64
+                     ? rb_band_insert(slots, eq.start, eq.coeff, eq.fp)
+                     : rb_band_insert_wide((rb_slot128 *)slots, eq.start, eq.coeff, rb_derive_coeff_hi(hash, salt), eq.fp);
+        if (!ok) break;
       }
       js[t] = j;
     }

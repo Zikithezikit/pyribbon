@@ -1,7 +1,7 @@
 # The C library
 
 This directory is the C11 core of pyribbon. It builds and tests without Python. It implements a standard ribbon filter
-(width 64) behind one header, `include/ribbon.h`: you give it a set of 64-bit key hashes, it builds a static filter that
+(width 64 or 128) behind one header, `include/ribbon.h`: you give it a set of 64-bit key hashes, it builds a static filter that
 answers "possibly present" or "definitely absent", and it can write the filter to a buffer and read it back without
 copying. A key that was added is always found. A key that was not added is found with probability about
 `2^-fp_bits`, where `fp_bits` is 1 to 32 (default 8). The filter cannot be changed after it is built.
@@ -68,8 +68,9 @@ Python package writes and reads the same format, so a filter built there loads h
 ### 2. Build
 
 ```c
-rb_params params = rb_params_default();   /* fp_bits 8, 32 attempts, automatic overhead, seed 0 */
+rb_params params = rb_params_default();   /* fp_bits 8, 32 attempts, automatic overhead, seed 0, width 64 */
 params.fp_bits = 10;
+params.width = RB_WIDTH_128;             /* optional (rb_width_kind): a smaller filter that builds and queries slower */
 params.seed = seed;
 rb_filter *f;
 rb_build_info info;
@@ -141,7 +142,7 @@ failure the output pointer (`*out`) is NULL, so there is nothing to free.
 | Status | When |
 |---|---|
 | `RB_OK` | success |
-| `RB_E_INVALID_ARG` | a NULL pointer, `fp_bits` outside 1 to 32, `max_attempts` above 255, `overhead` above 4 or NaN, or a destination buffer that is too small |
+| `RB_E_INVALID_ARG` | a NULL pointer, `fp_bits` outside 1 to 32, `width` that is not `RB_WIDTH_64` or `RB_WIDTH_128`, `max_attempts` above 255, `overhead` above 4 or NaN, or a destination buffer that is too small |
 | `RB_E_NOMEM` | an allocation failed |
 | `RB_E_CONSTRUCT` | every attempt failed to find a solution. Retry with another seed or a larger `overhead` |
 | `RB_E_TOO_LARGE` | more than `RB_MAX_KEYS` (2^38) keys, or a size beyond the supported range |
@@ -156,8 +157,9 @@ order. The query functions have no failure mode, and passing them a NULL filter 
 
 ### Accessors
 
-`rb_num_keys` (keys given to `rb_build`, duplicates counted), `rb_num_rows`, `rb_fp_bits` and `rb_seed` read the stored
-parameters of a built or loaded filter. `rb_default_overhead(n)` gives the table overhead the library picks for `n` keys.
+`rb_num_keys` (keys given to `rb_build`, duplicates counted), `rb_num_rows`, `rb_fp_bits`, `rb_width` and `rb_seed` read the
+stored parameters of a built or loaded filter. `rb_default_overhead(n)` gives the table overhead the library picks for `n`
+keys at width 64, and `rb_default_overhead_width(n, width)` the same for either width.
 
 ## Thread safety
 
@@ -168,14 +170,14 @@ while another thread is still using it, and you must not write to a buffer that 
 
 ## What it costs
 
-Space. A filter has `rows` rows, about `n * (1 + overhead)`, rounded up to a multiple of 64 with a minimum of 128. The
+Space. A filter has `rows` rows, about `n * (1 + overhead)`, rounded up to a multiple of 64 with a minimum of twice the width (128 or 256). The
 serialized size is `64 + rows / 64 * fp_bits * 8` bytes, which is about `fp_bits * (1 + overhead)` bits per key plus the
 header. The default overhead is between 5% and 16% for up to 2^24 keys and grows slowly above that (`rb_default_overhead`, `docs/internals.md` section 2). At 1,000,000 keys
 and `fp_bits` 8 that is 8.99 bits per key including the header, against 11.5 for a Bloom filter at the same false-positive
 rate.
 
 Memory while building. You supply the `hashes` array, 8 bytes per key. The builder allocates a temporary table of 16
-bytes per row, plus the payload that becomes the filter. The table is freed before `rb_build` returns. Loading a filter
+bytes per row (24 at width 128), plus the payload that becomes the filter. The table is freed before `rb_build` returns. Loading a filter
 with `rb_from_buffer` allocates only a small fixed handle.
 
 Time. Building does one pass over the keys per attempt, and the expected number of attempts is about 1.03 at the default

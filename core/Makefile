@@ -88,8 +88,9 @@ fpr-report: $(B)/fpr
 $(B)/calibrate: tools/calibrate.c src/ribbon.c $(HDRS) | $(B)
 	$(CC) $(CFLAGS) -o $@ tools/calibrate.c src/rb_hash.c $(LDLIBS)
 
-calibrate: $(B)/calibrate  ## regenerate the default-overhead table (slow: minutes)
-	./$(B)/calibrate 7 24
+WIDTH ?= 64
+calibrate: $(B)/calibrate  ## regenerate the default-overhead table, WIDTH=64 (k up to 24) or 128 (k up to 22) (slow: minutes)
+	./$(B)/calibrate 7 $(if $(filter 128,$(WIDTH)),22,24) 2e9 $(WIDTH)
 
 $(B)/bench_build: tools/bench_build.c $(LIB) $(HDRS) | $(B)
 	$(CC) $(CFLAGS) -o $@ tools/bench_build.c $(LIB) $(LDLIBS)
