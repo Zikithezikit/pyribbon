@@ -15,7 +15,7 @@ from __future__ import annotations
 from pyribbon._ribbon import ConstructionError, FormatError, RibbonError, RibbonFilter
 from pyribbon._width import Width
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 #: Types accepted as keys: bytes-like and ``str`` keys are hashed by content, ``int`` by value.
 Key = bytes | bytearray | memoryview | str | int
