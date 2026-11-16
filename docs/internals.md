@@ -23,10 +23,10 @@ column layout.
   | width 64 | 4.7% | 6.9% | 9.6% | 11.5% | 12.7% |
   | width 128 | 2.2% | 2.7% | 3.7% | 4.6% | 5.5% |
 
-  Width 128 saves 4% to 7% of the bits per key (section 2 has the measured overhead table). It costs a two-word coefficient: a
+  Width 128 saves 4% to 8% of the bits per key (section 2 has the measured overhead table). It costs a two-word coefficient: a
   24-byte slot instead of 16 while building, three payload words per column in a query instead of two, and a 128-bit shift in
-  the elimination. Measured on the real core, a build takes about 1.5 times as long (66 against 44 ns per key at a million keys)
-  and a query takes the same time within noise (35 against 33 ns per key in a batch). The default stays 64, so the same call
+  the elimination. In the Python benchmark (int keys, `fp_bits=8`), a build takes 1.5 times as long at a thousand keys and 1.25 times at ten
+  million, a batch query is 10% to 25% slower, and one `in` is 5% to 10% slower at a million keys and up (`docs/benchmark.md`). The default stays 64, so the same call
   gives the same bytes as before. The width is stored in the header (`width_log2`), and the format version did not change.
 - **Same bytes everywhere.** The same keys, parameters and seed give the same serialized bytes on every platform. Sizing uses
   integer arithmetic only, and a pure-Python implementation of the format (`tests/spec_reference.py`) produces the same

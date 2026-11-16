@@ -40,35 +40,68 @@ def by_size_block(data: dict[str, Any]) -> str:
     space, build, query = [], [], []
     for c in cells:
         n, f = c["n"], c["filters"]
-        pyr, xor, fuse, bloom = f["pyribbon8"], f["xor8"], f["fuse8"], f["rbloom8"]
+        pyr, wide, xor, fuse, bloom = f["pyribbon8"], f["pyribbon8w128"], f["xor8"], f["fuse8"], f["rbloom8"]
         core = c["diag"]["pyfusefilter"]["core_build"]["fuse8"]["median"]
         space.append(
-            [f"{n:,}"] + [f"{x['bits_per_key']:.2f}" for x in (pyr, xor, fuse, bloom)]
-            + [f"{100 * (pyr['bits_per_key'] / fuse['bits_per_key'] - 1):+.1f}%"]
+            [f"{n:,}"] + [f"{x['bits_per_key']:.2f}" for x in (pyr, wide, xor, fuse, bloom)]
+            + [f"{100 * (x['bits_per_key'] / fuse['bits_per_key'] - 1):+.1f}%" for x in (pyr, wide)]
         )  # fmt: skip
         build.append(
-            [f"{n:,}", f"{pyr['build_ns']['median'] / n:.0f}", f"{fuse['build_ns']['median'] / n:.0f}", f"{core:.0f}"]
+            [
+                f"{n:,}",
+                f"{pyr['build_ns']['median'] / n:.0f}",
+                f"{wide['build_ns']['median'] / n:.0f}",
+                f"{fuse['build_ns']['median'] / n:.0f}",
+                f"{core:.0f}",
+            ]
         )
-        batch_array = pyr.get("batch_array_kps", pyr["batch_kps"])["mixed"]["median"] / 1e6
+        batch_array, batch_array_wide = (
+            x.get("batch_array_kps", x["batch_kps"])["mixed"]["median"] / 1e6 for x in (pyr, wide)
+        )
         query.append(
             [
                 f"{n:,}",
                 f"{pyr['lat_member_ns']['median']:.0f} / {pyr['lat_non_member_ns']['median']:.0f}",
+                f"{wide['lat_member_ns']['median']:.0f} / {wide['lat_non_member_ns']['median']:.0f}",
                 f"{fuse['lat_member_ns']['median']:.0f} / {fuse['lat_non_member_ns']['median']:.0f}",
                 f"{pyr['batch_kps']['mixed']['median'] / 1e6:.1f}",
                 f"{batch_array:.1f}",
+                f"{batch_array_wide:.1f}",
             ]
         )
     return "\n\n".join(
         [
-            "*Space, 8-bit class (bits per key including the 64-byte header; last column: pyribbon relative to Fuse8):*",
-            _table(["n", "pyribbon", "Xor8", "Fuse8", "rbloom 2^-8", "pyribbon vs Fuse8"], space),
+            "*Space, 8-bit class (bits per key including the 64-byte header; last two columns: pyribbon relative to Fuse8):*",
+            _table(
+                [
+                    "n",
+                    "pyribbon",
+                    "pyribbon w128",
+                    "Xor8",
+                    "Fuse8",
+                    "rbloom 2^-8",
+                    "pyribbon vs Fuse8",
+                    "w128 vs Fuse8",
+                ],
+                space,
+            ),
             "*Build time (ns per key). `pyfusefilter` as shipped hashes every key in Python; the last column is its bare C "
             "core on pre-hashed keys, which is what a C-to-C comparison would use:*",
-            _table(["n", "pyribbon (Python keys)", "Fuse8 as shipped", "Fuse8 C core only"], build),
+            _table(["n", "pyribbon (Python keys)", "pyribbon w128", "Fuse8 as shipped", "Fuse8 C core only"], build),
             "*Query: `key in f` in ns (member / non-member) and `contains_many` throughput (million keys per second, 50/50 mix, "
             "from a list and from an `array('q')`):*",
-            _table(["n", "pyribbon `in`", "Fuse8 `in`", "pyribbon batch (list)", "pyribbon batch (array)"], query),
+            _table(
+                [
+                    "n",
+                    "pyribbon `in`",
+                    "w128 `in`",
+                    "Fuse8 `in`",
+                    "pyribbon batch (list)",
+                    "pyribbon batch (array)",
+                    "w128 batch (array)",
+                ],
+                query,
+            ),
         ]
     )
 

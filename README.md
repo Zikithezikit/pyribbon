@@ -34,7 +34,7 @@ assert "mallory" not in f  # this non-member was rejected; one in 2**12 would sl
 assert f.contains_many(["alice", "mallory"]) == [True, False]  # one answer per key
 ```
 
-Keys can be `bytes`, `str` or `int`. `RibbonFilter(keys, width=Width.W128)` builds a filter about 4% to 7% smaller, in about 1.5 times the build time. A filter built from a list, an `array.array` or a numpy array of integers answers a whole
+Keys can be `bytes`, `str` or `int`. `RibbonFilter(keys, width=Width.W128)` builds a filter 4% to 8% smaller, in 1.2 to 1.5 times the build time and with slower queries. A filter built from a list, an `array.array` or a numpy array of integers answers a whole
 batch with `contains_many`. Save one with `f.to_bytes()` and load it back with `RibbonFilter.from_buffer(data)`, which
 reads the bytes where they are without copying them. Eight runnable scripts in
 [examples/](https://github.com/Zikithezikit/pyribbon/tree/main/examples) start with `01_quickstart.py`.
@@ -76,16 +76,16 @@ The largest size, against the best other filter of the same fingerprint width:
 | --- | --- | ---: | ---: | ---: | ---: |
 | 8-bit | bits/key | 9.19 | 9.02 (Fuse8) | +2% | **pyribbon behind** |
 | 8-bit | bits/key above log2(1/FPR) | 1.18 | 1.00 (Fuse8) | +17% | **pyribbon behind** |
-| 8-bit | build ns/key | 78 | 207 (rbloom 2^-8, builtin hash()) | -63% | pyribbon ahead |
-| 8-bit | `in` member ns | 86 | 218 (rbloom 2^-8, builtin hash()) | -60% | pyribbon ahead |
-| 8-bit | `in` non-member ns | 88 | 143 (rbloom 2^-8, builtin hash()) | -38% | pyribbon ahead |
-| 8-bit | batch Mkeys/s (50/50 mix) | 18.61 | 5.37 (rbloom 2^-8, builtin hash()) | +247% | pyribbon ahead |
+| 8-bit | build ns/key | 78 | 203 (rbloom 2^-8, builtin hash()) | -62% | pyribbon ahead |
+| 8-bit | `in` member ns | 91 | 213 (rbloom 2^-8, builtin hash()) | -57% | pyribbon ahead |
+| 8-bit | `in` non-member ns | 94 | 139 (rbloom 2^-8, builtin hash()) | -33% | pyribbon ahead |
+| 8-bit | batch Mkeys/s (50/50 mix) | 20.92 | 5.48 (rbloom 2^-8, builtin hash()) | +281% | pyribbon ahead |
 | 16-bit | bits/key | 18.39 | 18.04 (Fuse16) | +2% | **pyribbon behind** |
 | 16-bit | bits/key above log2(1/FPR) | 2.36 | 1.95 (Fuse16) | +21% | **pyribbon behind** |
-| 16-bit | build ns/key | 92 | 432 (rbloom 2^-16, builtin hash()) | -79% | pyribbon ahead |
-| 16-bit | `in` member ns | 136 | 417 (rbloom 2^-16, builtin hash()) | -67% | pyribbon ahead |
-| 16-bit | `in` non-member ns | 106 | 162 (rbloom 2^-16, builtin hash()) | -34% | pyribbon ahead |
-| 16-bit | batch Mkeys/s (50/50 mix) | 11.73 | 3.36 (rbloom 2^-16, builtin hash()) | +249% | pyribbon ahead |
+| 16-bit | build ns/key | 93 | 423 (rbloom 2^-16, builtin hash()) | -78% | pyribbon ahead |
+| 16-bit | `in` member ns | 131 | 411 (rbloom 2^-16, builtin hash()) | -68% | pyribbon ahead |
+| 16-bit | `in` non-member ns | 109 | 162 (rbloom 2^-16, builtin hash()) | -33% | pyribbon ahead |
+| 16-bit | batch Mkeys/s (50/50 mix) | 12.24 | 3.40 (rbloom 2^-16, builtin hash()) | +260% | pyribbon ahead |
 
 Delta is relative to the best other filter of the same fingerprint class, including rbloom with its builtin `hash()`; a negative delta means pyribbon is lower. Lower is better except for batch throughput. The 'above log2(1/FPR)' rows move with the measured FPR, whose uncertainty is in the notes. The batch row compares `contains_many` with the other libraries' per-key loop, because none of them has a batch API. The table is computed from the raw results of this run.
 <!-- bench:end -->

@@ -38,6 +38,7 @@ M64 = (1 << 64) - 1
 # Okabe-Ito picks, validated for colour-vision deficiency (dataviz skill); marker + line style are the second encoding.
 STYLE = {  # family -> (colour, marker)
     "pyribbon": ("#D55E00", "o"),
+    "pyribbon128": ("#E69F00", "P"),
     "fuse": ("#009E73", "^"),
     "xor": ("#0072B2", "s"),
     "bloom": ("#CC79A7", "D"),
@@ -298,19 +299,23 @@ def _as_int_array(keys: list[Any]) -> Any:
 
 def _load_pyribbon() -> Lib:
     import pyribbon
-    from pyribbon import RibbonFilter
+    from pyribbon import RibbonFilter, Width
 
     impls = [
         Impl(
-            f"pyribbon{b}",
-            f"pyribbon fp{b}",
-            "pyribbon",
+            f"pyribbon{b}{suffix}",
+            f"pyribbon fp{b}{label}",
+            family,
             b,
-            build=lambda keys, regime, b=b: RibbonFilter(keys, fp_bits=b),
+            build=lambda keys, regime, b=b, w=width: RibbonFilter(keys, fp_bits=b, width=w),
             size_bits=lambda f: 8.0 * f.size_in_bytes,
             batch=lambda f, keys: f.contains_many(keys),
             batch_array=lambda f, keys: f.contains_many(_as_int_array(keys)),
             count_fp=lambda f, chunk, cache: sum(f.contains_many(chunk)),
+        )
+        for width, suffix, label, family in (
+            (Width.W64, "", "", "pyribbon"),
+            (Width.W128, "w128", " w128", "pyribbon128"),
         )
         for b in (8, 16)
     ]
@@ -661,7 +666,11 @@ def verdict_rows(cell: dict[str, Any]) -> list[list[str]]:
     for bits in (8, 16):
         mine = cell["filters"].get(f"pyribbon{bits}")
         # rbloom with its builtin hash() is included: for int keys it is a sound configuration (see the notes).
-        others = [(k, v) for k, v in cell["filters"].items() if v["family"] != "pyribbon" and v["fp_bits"] == bits]
+        others = [
+            (k, v)
+            for k, v in cell["filters"].items()
+            if not v["family"].startswith("pyribbon") and v["fp_bits"] == bits
+        ]
         if not mine or not others:
             continue
         for name, fn, lower, fmt in metrics:
@@ -685,6 +694,27 @@ def verdict_rows(cell: dict[str, Any]) -> list[list[str]]:
     return rows
 
 
+def width_rows(cell: dict[str, Any]) -> list[list[str]]:
+    """Width 128 against width 64 of pyribbon at one size, per fingerprint class."""
+    n = cell["n"]
+    metrics: list[tuple[str, Callable[[dict[str, Any]], float], str]] = [
+        ("bits/key", lambda v: v["bits_per_key"], "{:.2f}"),
+        ("build ns/key", lambda v: v["build_ns"]["median"] / n, "{:.0f}"),
+        ("`in` member ns", lambda v: v["lat_member_ns"]["median"], "{:.0f}"),
+        ("`in` non-member ns", lambda v: v["lat_non_member_ns"]["median"], "{:.0f}"),
+        ("batch Mkeys/s (50/50 mix)", lambda v: v["batch_kps"]["mixed"]["median"] / 1e6, "{:.2f}"),
+    ]
+    rows = []
+    for bits in (8, 16):
+        narrow, wide = cell["filters"].get(f"pyribbon{bits}"), cell["filters"].get(f"pyribbon{bits}w128")
+        if not narrow or not wide:
+            continue
+        for name, fn, fmt in metrics:
+            a, b = fn(narrow), fn(wide)
+            rows.append([f"{bits}-bit", name, fmt.format(a), fmt.format(b), f"{100 * (b - a) / a:+.0f}%"])
+    return rows
+
+
 def report_markdown(meta: dict[str, Any], results: list[dict[str, Any]]) -> str:
     """The whole ``benchmark.md``: machine block, parameters, summary, tables, notes."""
     out = ["# pyribbon benchmark", "", "## Machine and software", ""]
@@ -704,6 +734,14 @@ def report_markdown(meta: dict[str, Any], results: list[dict[str, Any]]) -> str:
             "a negative delta means pyribbon is lower. Lower is better except for batch throughput. The 'above log2(1/FPR)' rows "
             "move with the measured FPR, whose uncertainty is in the notes. The batch row compares `contains_many` with the other "
             "libraries' per-key loop, because none of them has a batch API. The table is computed from the raw results of this run.",
+        ]
+    if ints and width_rows(top):
+        out += ["", f"## Width 128 against width 64 (int keys, n = {top['n']:,})", ""]
+        out += [md_table(["Class", "Metric", "width 64", "width 128", "Delta"], width_rows(top), left=2)]
+        out += [
+            "",
+            "The same keys, `fp_bits` and default overhead at both widths. The win/loss table above is width 64, the default; "
+            "width 128 appears below as `w128` rows.",
         ]
     for regime, title in (
         ("int", "int keys (pseudo-random 63-bit)"),
