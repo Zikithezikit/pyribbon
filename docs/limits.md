@@ -5,10 +5,11 @@
   `len()`.
 * It uses about `1.12 * fp_bits` bits per key at a million keys, against `1.44 * fp_bits` for Bloom filters. With width 64
   the overhead grows with the logarithm of the set size, so binary-fuse filters are smaller from about a million keys up
-  (see [performance](performance.md)). Width 128 or sharding would remove that overhead; both are on the roadmap.
-* Small sets are padded. The minimum is 128 rows: 128 bytes plus a 64-byte header at `fp_bits=8`. Use a plain `set` for a
-  few dozen keys.
-* The build uses about 26 bytes per key temporarily (an array of hashes and the elimination state). Its elimination is
+  (see [performance](performance.md)). `width=128` saves 4% to 7% of the space (about `1.05 * fp_bits` bits per key at a million
+  keys) and builds about 1.5 times slower. Sharding would flatten the growth further and is on the roadmap.
+* Small sets are padded. The minimum is 128 rows (256 at width 128): 128 bytes plus a 64-byte header at `fp_bits=8`. Use a
+  plain `set` for a few dozen keys.
+* The build uses about 26 bytes per key temporarily (an array of hashes and the elimination state), about 33 at width 128. Its elimination is
   also slower than the bare C core of the fuse filters (see the build table in [performance](performance.md)).
 * Hashes are 64-bit, so two distinct keys with the same hash are indistinguishable (probability about `n**2 / 2**65`).
 * The timings here were measured on one Linux x86-64 machine. CI builds wheels and runs the tests on Linux (x86-64 and

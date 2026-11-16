@@ -1,6 +1,6 @@
 # API reference
 
-Everything is importable from `pyribbon`: `RibbonFilter`, `RibbonError`, `ConstructionError`, `FormatError`, `Key` and
+Everything is importable from `pyribbon`: `RibbonFilter`, `Width`, `RibbonError`, `ConstructionError`, `FormatError`, `Key` and
 `__version__`. The package ships type stubs and is checked with `mypy --strict`.
 
 ## `Key`
@@ -8,13 +8,25 @@ Everything is importable from `pyribbon`: `RibbonFilter`, `RibbonError`, `Constr
 The type of a key: `bytes | bytearray | memoryview | str | int`. Bytes-like keys are hashed by content, `str` as UTF-8, and `int`
 at any size. `b"a"`, `"a"` and `97` are three different keys. Any other type raises `TypeError`. See [usage](usage.md#keys).
 
+## `Width`
+
+An `enum.IntEnum` of the two ribbon widths, so the choice is one of exactly these:
+
+| Member | Value | Meaning |
+|---|---|---|
+| `Width.W64` | 64 | The default. Faster to build. |
+| `Width.W128` | 128 | About 4% to 7% smaller, and about 1.5 times slower to build. Queries are as fast. |
+
+The members are ints (`Width.W128 == 128`), and `RibbonFilter` accepts only these two values: any other number raises `ValueError`,
+and a type checker rejects anything but a `Width`.
+
 ## `RibbonFilter`
 
 An immutable approximate-membership filter (a standard ribbon filter). A key that was in the build set is always found. A key
 that was not is reported as present with probability about `2**-fp_bits`. It is safe to query from many threads.
 
 ```python
-RibbonFilter(keys, *, fp_bits=8, seed=0, overhead=None, max_attempts=32)
+RibbonFilter(keys, *, fp_bits=8, seed=0, overhead=None, max_attempts=32, width=Width.W64)
 ```
 
 Builds a filter from `keys`.
@@ -26,6 +38,7 @@ Builds a filter from `keys`.
 | `seed` | The seed the build starts from, `0 <= seed < 2**64`. The same keys and seed give the same bytes. Default 0. |
 | `overhead` | Extra rows as a fraction of the key count, 0 to 4. `None` picks a value that makes a build succeed about 97% of the time at that size. |
 | `max_attempts` | How many times a failed build is retried with another seed and a slightly larger table, 1 to 255. Default 32. |
+| `width` | The ribbon width, a [`Width`](#width) member. A wider ribbon needs less overhead, so the filter is smaller (see [limits](limits.md)), and it builds slower. Default `Width.W64`. The width is fixed at build time: a filter holds no keys, so changing it means building a new filter from the keys. |
 
 Raises `ConstructionError` if every attempt fails, `ValueError` for an argument out of range, `TypeError` for a key of an
 unsupported type, and `MemoryError` if the build cannot allocate. Duplicate keys are harmless and counted by `len()`.
@@ -46,6 +59,7 @@ Builds release the GIL.
 | `f.size_in_bytes` | Length of the serialized filter in bytes, header included. |
 | `f.bits_per_key` | `8 * size_in_bytes / len(f)`, or `0.0` for an empty filter. |
 | `f.fp_bits` | The fingerprint bits the filter was built with. |
+| `f.width` | The `Width` the filter was built with. It is stored in the serialized header. |
 
 ### Saving and loading
 
