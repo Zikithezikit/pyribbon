@@ -14,8 +14,8 @@ An `enum.IntEnum` of the two ribbon widths, so the choice is one of exactly thes
 
 | Member | Value | Meaning |
 |---|---|---|
-| `Width.W64` | 64 | The default. Faster to build. |
-| `Width.W128` | 128 | About 4% to 7% smaller, and about 1.5 times slower to build. Queries are as fast. |
+| `Width.W64` | 64 | The default. Faster to build and to query. |
+| `Width.W128` | 128 | About 4% to 8% smaller from 10,000 keys up, but slower to build and to query (see [performance](performance.md)). |
 
 The members are ints (`Width.W128 == 128`), and `RibbonFilter` accepts only these two values: any other number raises `ValueError`,
 and a type checker rejects anything but a `Width`.

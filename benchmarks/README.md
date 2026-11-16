@@ -1,6 +1,6 @@
 # Benchmarks
 
-`bench.py` compares `pyribbon` (fp_bits 8 and 16, default sizing) with `pyfusefilter` (Xor8, Xor16, Fuse8, Fuse16) and
+`bench.py` compares `pyribbon` (fp_bits 8 and 16, default sizing, at width 64 and at width 128) with `pyfusefilter` (Xor8, Xor16, Fuse8, Fuse16) and
 `rbloom` (a Rust Bloom filter sized for 2^-8 and 2^-16). It measures bits/key at the measured false-positive rate, build
 time, single-query latency and batch throughput, then writes:
 

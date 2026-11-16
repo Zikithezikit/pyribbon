@@ -59,9 +59,10 @@ your own machine.
 ### Choosing `width`
 
 `width=Width.W64` (the default) and `width=Width.W128` build the same kind of filter with the same false-positive rate. The wider ribbon needs
-less spare room in its table, so the filter is 4% to 7% smaller (8.41 against 8.99 bits per key at a million keys and
-`fp_bits=8`, and the gap grows with the set). The cost is about 1.5 times the build time, with queries about as fast. These figures are from a quick run on one machine. The benchmark tables cover width 64 only. Pick 128 for
-a filter that is built once and stored or shipped, and 64 when build time matters more than the last few percent. The width is
+less spare room in its table, so the filter is 4% to 8% smaller from 10,000 keys up (8.41 against 8.99 bits per key at a million keys and
+`fp_bits=8`, and the gap grows with the set). The cost is 1.2 to 1.5 times the build time, a batch query 10% to 25% slower and
+a single `in` about 5% slower at a million keys or more (the [benchmarks](performance.md) have both widths). Pick 128 for
+a filter that is built once and stored or shipped, and 64 when build or query speed matters more than the last few percent. The width is
 saved in the serialized header, so `from_buffer` and `pickle` restore it, and `f.width` reads it. Filters of the two widths are
 different bytes for the same keys, and a filter cannot be converted from one to the other: it holds no keys, so build a new one
 from the keys.

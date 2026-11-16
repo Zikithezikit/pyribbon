@@ -11,8 +11,9 @@ filters saved by 0.1.2 load unchanged.
 
 ### Added
 - `RibbonFilter(..., width=Width.W128)` builds a ribbon filter of width 128, which needs less spare room in its table: the filter
-  is 4% to 7% smaller than at width 64 (8.41 against 8.99 bits per key at a million keys, `fp_bits=8`). A build takes about 1.5
-  times as long and queries are as fast. These figures are from a quick run on one machine; the benchmark tables cover width 64 only.
+  is 4% to 8% smaller than at width 64 from 10,000 keys up (8.41 against 8.99 bits per key at a million keys, `fp_bits=8`). A
+  build takes 1.2 to 1.5 times as long, a batch query is 10% to 25% slower and one `in` is up to 30% slower at small sizes and
+  about 5% slower at a million keys or more. Both widths are in the benchmark tables (`docs/performance.md`).
 - `Width`, a new `IntEnum` with the two members `W64` and `W128`, the only values the `width` argument accepts. Anything else
   raises `ValueError`. The default is `Width.W64`.
 - `RibbonFilter.width` reads the width a filter was built with, as a `Width`.
@@ -39,7 +40,7 @@ filters saved by 0.1.2 load unchanged.
 ### Documentation
 - The README shows the pyribbon logo. The logo files are in `docs/img/logo/`: the mark and the lockup as SVG, in colour, ink, white and single-colour versions, a few PNG sizes, and a social preview image. The README uses the colour lockup on a white backing, so it reads on a dark page.
 - The API reference, usage guide, limits page and internals describe width 128, the `Width` type and the file format change.
-- `examples/08_width.py` compares the two widths.
+- `examples/08_width.py` compares the two widths, and the benchmarks (`benchmarks/bench.py`, `docs/performance.md`) measure both.
 
 ## [0.1.2] - 2026-11-14
 

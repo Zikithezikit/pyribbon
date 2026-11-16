@@ -5,8 +5,8 @@
   `len()`.
 * It uses about `1.12 * fp_bits` bits per key at a million keys, against `1.44 * fp_bits` for Bloom filters. With width 64
   the overhead grows with the logarithm of the set size, so binary-fuse filters are smaller from about a million keys up
-  (see [performance](performance.md)). `width=128` saves 4% to 7% of the space (about `1.05 * fp_bits` bits per key at a million
-  keys) and builds about 1.5 times slower. Sharding would flatten the growth further and is on the roadmap.
+  (see [performance](performance.md)). `width=128` saves 4% to 8% of the space (about `1.05 * fp_bits` bits per key at a million
+  keys), builds 1.2 to 1.5 times slower and queries slower. Sharding would flatten the growth further and is on the roadmap.
 * Small sets are padded. The minimum is 128 rows (256 at width 128): 128 bytes plus a 64-byte header at `fp_bits=8`. Use a
   plain `set` for a few dozen keys.
 * The build uses about 26 bytes per key temporarily (an array of hashes and the elimination state), about 33 at width 128. Its elimination is
