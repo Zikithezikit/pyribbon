@@ -1,6 +1,6 @@
 /*
  * ribbon.h - public C API of the pyribbon core: a static approximate-membership
- * ("ribbon") filter. Standard ribbon, width w = 64, interleaved column layout.
+ * ("ribbon") filter. Standard ribbon, width w = 64 or 128, interleaved column layout.
  *
  * Algorithm: P. C. Dillinger and S. Walzer, "Ribbon filter: practically smaller than
  * Bloom and Xor", arXiv:2103.02515 (cited as [R] in the sources). Design and format:
@@ -24,7 +24,6 @@ extern "C" {
 
 #define RB_FORMAT_VERSION 1
 #define RB_HEADER_SIZE 64u        /* bytes before the payload in the serialized form */
-#define RB_WIDTH 64u              /* ribbon width w, in rows */
 #define RB_MIN_FP_BITS 1u
 #define RB_MAX_FP_BITS 32u
 #define RB_DEFAULT_FP_BITS 8u
@@ -32,6 +31,10 @@ extern "C" {
 #define RB_MAX_ATTEMPTS 255u
 #define RB_MAX_ROWS (UINT64_C(1) << 40) /* largest num_rows a loader accepts */
 #define RB_MAX_KEYS (UINT64_C(1) << 38) /* rb_build rejects more keys than this with RB_E_TOO_LARGE */
+
+/* Ribbon width w, in rows: the two widths the format has. RB_WIDTH_64 is the default. A wider ribbon needs less spare room in
+ * its table, so the filter is smaller, and it builds slower. */
+typedef enum { RB_WIDTH_64 = 64, RB_WIDTH_128 = 128 } rb_width_kind;
 
 typedef struct rb_filter rb_filter; /* opaque */
 
@@ -58,6 +61,7 @@ typedef struct {
   uint32_t max_attempts; /* 1..255; 0 selects RB_DEFAULT_MAX_ATTEMPTS */
   double overhead;       /* extra rows as a fraction of n, at most 4; negative selects rb_default_overhead(n) */
   uint64_t seed;         /* stored in the filter; the keys must have been hashed with this same seed */
+  rb_width_kind width;   /* RB_WIDTH_64 or RB_WIDTH_128; any other value is RB_E_INVALID_ARG */
 } rb_params;
 
 typedef struct {
@@ -79,14 +83,15 @@ uint64_t rb_hash_bytes(const void *data, size_t len, uint64_t seed, rb_key_kind 
 uint64_t rb_hash_i64(int64_t value, uint64_t seed);
 
 /* Overhead (extra rows / n) used when params.overhead < 0, before the row count is rounded up to a multiple of 64
- * (minimum 128 rows). */
+ * (minimum 2 * width rows). rb_default_overhead is the width-64 value. */
 double rb_default_overhead(uint64_t n);
+double rb_default_overhead_width(uint64_t n, rb_width_kind width);
 
 /* Build a filter from n master hashes (duplicates are allowed and harmless). `hashes` is only read during the call
  * and may be NULL when n is 0, which gives a valid empty filter that contains nothing. `params` may be NULL for
  * defaults; `info` may be NULL and is written only on success. On success *out is a filter that owns its memory: release it with rb_free. On failure
- * *out is NULL and the status is RB_E_INVALID_ARG (bad parameter, NULL `out`, NULL `hashes` with n > 0),
- * RB_E_TOO_LARGE, RB_E_NOMEM or RB_E_CONSTRUCT. Temporary memory during the call: 16 bytes per row. */
+ * *out is NULL and the status is RB_E_INVALID_ARG (bad parameter, width not one of rb_width_kind, NULL `out`, NULL `hashes` with n > 0),
+ * RB_E_TOO_LARGE, RB_E_NOMEM or RB_E_CONSTRUCT. Temporary memory during the call: 16 bytes per row (24 at width 128). */
 rb_status rb_build(const uint64_t *hashes, size_t n, const rb_params *params, rb_filter **out, rb_build_info *info);
 
 /* View a serialized filter without copying. `buf` must stay valid and unmodified until rb_free(filter) has
@@ -121,6 +126,7 @@ rb_status rb_serialize(const rb_filter *filter, void *dst, size_t capacity);
 uint64_t rb_num_keys(const rb_filter *filter); /* keys supplied to rb_build, duplicates included */
 uint64_t rb_num_rows(const rb_filter *filter); /* rows in the table; 0 for an empty filter */
 uint32_t rb_fp_bits(const rb_filter *filter);
+rb_width_kind rb_width(const rb_filter *filter);
 uint64_t rb_seed(const rb_filter *filter);
 
 #ifdef __cplusplus

@@ -62,12 +62,15 @@ static long sweep_build(const uint64_t *h, size_t n, const rb_params *p) {
 
 static void test_build(void) {
   uint64_t *h = make_hashes(100000);
-  rb_params p = rb_params_default();
-  CHECK(sweep_build(h, 0, &p) == 1);   /* an empty filter: only the struct */
-  CHECK(sweep_build(h, 1000, &p) == 3); /* struct, slot table, payload */
-  /* overhead 0 forces retries; from the third attempt the table grows, so the slot table is allocated again */
-  p.overhead = 0.0;
-  CHECK(sweep_build(h, 100000, &p) > 3);
+  for (uint32_t width = RB_WIDTH_64; width <= RB_WIDTH_128; width *= 2u) {
+    rb_params p = rb_params_default();
+    p.width = (rb_width_kind)width;
+    CHECK(sweep_build(h, 0, &p) == 1);   /* an empty filter: only the struct */
+    CHECK(sweep_build(h, 1000, &p) == 3); /* struct, slot table, payload */
+    /* overhead 0 forces retries; from the third attempt the table grows, so the slot table is allocated again */
+    p.overhead = 0.0;
+    CHECK(sweep_build(h, 100000, &p) > 3);
+  }
   free(h);
 }
 
