@@ -1,1 +1,3 @@
 # stubtest allowlist: items that cannot be introspected on a C extension type
+# The C text signature can only show width=64; the stub types the parameter as the Width enum (Width.W64 is the default).
+pyribbon._ribbon.RibbonFilter.__new__

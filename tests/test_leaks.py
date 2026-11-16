@@ -33,6 +33,7 @@ LIMIT = 2 * 1024 * 1024
 N = 10_000
 KEYS = list(range(N))
 BLOB = RibbonFilter(KEYS).to_bytes()
+WIDTHS = [64, 128]
 
 
 def rss() -> int:
@@ -73,20 +74,24 @@ def test_rss_probe_sees_a_deliberate_leak() -> None:
 
 
 @pytest.mark.parametrize("fp_bits", [8, 32])
-def test_build_and_free_loop(fp_bits: int) -> None:
+@pytest.mark.parametrize("width", WIDTHS)
+def test_build_and_free_loop(fp_bits: int, width: int) -> None:
     def body(k: int) -> None:
         for i in range(k):
-            f = RibbonFilter(KEYS, fp_bits=fp_bits, seed=i)
+            f = RibbonFilter(KEYS, fp_bits=fp_bits, seed=i, width=width)
             assert 0 in f and (N - 1) in f
             del f
 
     assert_no_growth(body, 300)
 
 
-def test_from_buffer_and_free_loop() -> None:
+@pytest.mark.parametrize("width", WIDTHS)
+def test_from_buffer_and_free_loop(width: int) -> None:
+    blob = RibbonFilter(KEYS, width=width).to_bytes()
+
     def body(k: int) -> None:
         for _ in range(k):
-            f = RibbonFilter.from_buffer(BLOB)
+            f = RibbonFilter.from_buffer(blob)
             assert 5 in f
             del f
 
@@ -114,15 +119,18 @@ def test_to_bytes_and_pickle_loop() -> None:
     assert_no_growth(body, 300)
 
 
-def test_failed_construction_loop() -> None:
+@pytest.mark.parametrize("width", WIDTHS)
+def test_failed_construction_loop(width: int) -> None:
+    full = KEYS[: N // 64 * 64]  # a multiple of 64: no padding rows, so a table with zero overhead is exactly full
+
     def body(k: int) -> None:
         raised = 0
         for i in range(k):
             try:
-                RibbonFilter(KEYS, overhead=0.0, max_attempts=1, seed=i)
+                RibbonFilter(full, overhead=0.0, max_attempts=1, seed=i, width=width)
             except ConstructionError:
                 raised += 1
-        assert raised == k  # 0.5% slack on 10000 keys: a single attempt always fails; the error path is what we measure
+        assert raised == k  # an exactly full table cannot be solved in one attempt; the error path is what we measure
 
     assert_no_growth(body, 300)
 

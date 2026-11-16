@@ -29,6 +29,8 @@ from pyribbon import ConstructionError, RibbonFilter
 HEADER = 64
 SEEDS = st.one_of(st.integers(0, 2**64 - 1), st.sampled_from([0, 1, 2**32 - 1, 2**32, 2**63, 2**64 - 1]))
 FP_BITS = st.integers(1, 32)
+WIDTH_VALUES = [64, 128]
+WIDTHS = st.sampled_from(WIDTH_VALUES)
 DATA_SEEDS = st.integers(0, 2**32 - 1)
 OVERHEADS = st.sampled_from([None, 0.0, 0.0, 0.02, 0.05, 0.3, 1.0])
 BOUNDARY_SIZES = [0, 1, 2, 3, 31, 32, 33, 63, 64, 65, 118, 119, 120, 121, 122, 127, 128, 129, 191, 192, 193, 255, 256]
@@ -130,9 +132,10 @@ def _assert_all_members(keys: list[Any], f: RibbonFilter, fp_bits: int) -> None:
     keys=st.lists(st.binary(max_size=40), max_size=60),
     fp_bits=FP_BITS,
     seed=SEEDS,
+    width=WIDTHS,
 )
-def test_no_false_negatives_bytes(keys: list[bytes], fp_bits: int, seed: int) -> None:
-    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed), fp_bits)
+def test_no_false_negatives_bytes(keys: list[bytes], fp_bits: int, seed: int, width: int) -> None:
+    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed, width=width), fp_bits)
 
 
 @given(
@@ -147,9 +150,10 @@ def test_no_false_negatives_bytes(keys: list[bytes], fp_bits: int, seed: int) ->
     ),
     fp_bits=FP_BITS,
     seed=SEEDS,
+    width=WIDTHS,
 )
-def test_no_false_negatives_str(keys: list[str], fp_bits: int, seed: int) -> None:
-    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed), fp_bits)
+def test_no_false_negatives_str(keys: list[str], fp_bits: int, seed: int, width: int) -> None:
+    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed, width=width), fp_bits)
 
 
 def _int_keys() -> st.SearchStrategy[int]:
@@ -165,9 +169,9 @@ def _int_keys() -> st.SearchStrategy[int]:
     )
 
 
-@given(keys=st.lists(_int_keys(), max_size=60), fp_bits=FP_BITS, seed=SEEDS)
-def test_no_false_negatives_int(keys: list[int], fp_bits: int, seed: int) -> None:
-    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed), fp_bits)
+@given(keys=st.lists(_int_keys(), max_size=60), fp_bits=FP_BITS, seed=SEEDS, width=WIDTHS)
+def test_no_false_negatives_int(keys: list[int], fp_bits: int, seed: int, width: int) -> None:
+    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed, width=width), fp_bits)
 
 
 @given(
@@ -183,9 +187,10 @@ def test_no_false_negatives_int(keys: list[int], fp_bits: int, seed: int) -> Non
     ),
     fp_bits=FP_BITS,
     seed=SEEDS,
+    width=WIDTHS,
 )
-def test_no_false_negatives_mixed_key_types(keys: list[Any], fp_bits: int, seed: int) -> None:
-    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed), fp_bits)
+def test_no_false_negatives_mixed_key_types(keys: list[Any], fp_bits: int, seed: int, width: int) -> None:
+    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed, width=width), fp_bits)
 
 
 @given(
@@ -195,40 +200,45 @@ def test_no_false_negatives_mixed_key_types(keys: list[Any], fp_bits: int, seed:
     seed=SEEDS,
     overhead=OVERHEADS,
     data_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 @hsettings(max_examples=150)
 def test_no_false_negatives_by_set_size(
-    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, data_seed: int
+    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, data_seed: int, width: int
 ) -> None:
     keys = make_keys(random.Random(data_seed), n, kind)
-    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed, overhead=overhead), fp_bits)
+    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=seed, overhead=overhead, width=width), fp_bits)
 
 
 @pytest.mark.parametrize("n", BOUNDARY_SIZES)
 @pytest.mark.parametrize("fp_bits", [1, 8, 32])
-def test_boundary_sizes_are_always_exercised(n: int, fp_bits: int) -> None:
+@pytest.mark.parametrize("width", WIDTH_VALUES)
+def test_boundary_sizes_are_always_exercised(n: int, fp_bits: int, width: int) -> None:
     keys = make_keys(random.Random(n * 100 + fp_bits), n, "mixed")
-    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=n), fp_bits)
+    _assert_all_members(keys, RibbonFilter(keys, fp_bits=fp_bits, seed=n, width=width), fp_bits)
 
 
 @pytest.mark.parametrize("n", [10_000, 100_000, 1_000_000])
-def test_large_int_sets(n: int) -> None:
-    f = RibbonFilter(range(n))
+@pytest.mark.parametrize("width", WIDTH_VALUES)
+def test_large_int_sets(n: int, width: int) -> None:
+    f = RibbonFilter(range(n), width=width)
     assert len(f) == n
     assert all(f.contains_many(range(n)))
     assert all(i in f for i in range(n - 1, max(n - 2000, -1), -1))
 
 
 @pytest.mark.parametrize("kind", ["str", "bytes", "bigint", "mixed"])
-def test_large_sets_of_other_key_types(kind: str) -> None:
+@pytest.mark.parametrize("width", WIDTH_VALUES)
+def test_large_sets_of_other_key_types(kind: str, width: int) -> None:
     keys = make_keys(random.Random(5), 100_000, kind)
-    f = RibbonFilter(keys, seed=2**64 - 1)
+    f = RibbonFilter(keys, seed=2**64 - 1, width=width)
     assert all(f.contains_many(keys))
 
 
 @pytest.mark.parametrize("fp_bits", [1, 32])
-def test_large_set_extreme_fp_bits(fp_bits: int) -> None:
-    f = RibbonFilter(range(50_000), fp_bits=fp_bits, seed=2**64 - 1)
+@pytest.mark.parametrize("width", WIDTH_VALUES)
+def test_large_set_extreme_fp_bits(fp_bits: int, width: int) -> None:
+    f = RibbonFilter(range(50_000), fp_bits=fp_bits, seed=2**64 - 1, width=width)
     assert all(f.contains_many(range(50_000)))
 
 
@@ -294,11 +304,12 @@ def _check_order_independence(
     max_attempts: int,
     data_seed: int,
     perm_seed: int,
+    width: int,
 ) -> None:
     keys = make_keys(random.Random(data_seed), n, kind)
     shuffled = keys[:]
     random.Random(perm_seed).shuffle(shuffled)
-    kwargs = {"fp_bits": fp_bits, "seed": seed, "overhead": overhead, "max_attempts": max_attempts}
+    kwargs = {"fp_bits": fp_bits, "seed": seed, "overhead": overhead, "max_attempts": max_attempts, "width": width}
     a = _try_build(keys, **kwargs)
     b = _try_build(shuffled, **kwargs)
     event("both built" if a is not None else "both failed")
@@ -314,6 +325,7 @@ def _check_order_independence(
     max_attempts=st.integers(1, 4),
     data_seed=DATA_SEEDS,
     perm_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 @hsettings(max_examples=150)
 def test_serialized_bytes_do_not_depend_on_key_order(
@@ -325,8 +337,9 @@ def test_serialized_bytes_do_not_depend_on_key_order(
     max_attempts: int,
     data_seed: int,
     perm_seed: int,
+    width: int,
 ) -> None:
-    _check_order_independence(n, kind, fp_bits, seed, overhead, max_attempts, data_seed, perm_seed)
+    _check_order_independence(n, kind, fp_bits, seed, overhead, max_attempts, data_seed, perm_seed, width)
 
 
 @given(
@@ -338,13 +351,22 @@ def test_serialized_bytes_do_not_depend_on_key_order(
     max_attempts=st.integers(1, 3),
     data_seed=DATA_SEEDS,
     perm_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 @hsettings(max_examples=150)
 def test_key_order_independence_when_construction_often_fails(
-    n: int, kind: str, fp_bits: int, seed: int, overhead: float, max_attempts: int, data_seed: int, perm_seed: int
+    n: int,
+    kind: str,
+    fp_bits: int,
+    seed: int,
+    overhead: float,
+    max_attempts: int,
+    data_seed: int,
+    perm_seed: int,
+    width: int,
 ) -> None:
     """Sets sized so that many builds need a retry or fail outright: success itself must not depend on order."""
-    _check_order_independence(n, kind, fp_bits, seed, overhead, max_attempts, data_seed, perm_seed)
+    _check_order_independence(n, kind, fp_bits, seed, overhead, max_attempts, data_seed, perm_seed, width)
 
 
 def test_order_independence_is_not_vacuous() -> None:
@@ -372,17 +394,18 @@ def test_order_independence_is_not_vacuous() -> None:
     seed=SEEDS,
     overhead=st.sampled_from([0.05, 0.1, 0.5]),
     data_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 def test_duplicates_do_not_change_the_solution(
-    n: int, dups: int, fp_bits: int, seed: int, overhead: float, data_seed: int
+    n: int, dups: int, fp_bits: int, seed: int, overhead: float, data_seed: int, width: int
 ) -> None:
     rng = random.Random(data_seed)
     keys = make_keys(rng, n, "int")
     with_dups = keys + [rng.choice(keys) for _ in range(dups)]
     rng.shuffle(with_dups)
-    f = RibbonFilter(with_dups, fp_bits=fp_bits, seed=seed, overhead=overhead)
+    f = RibbonFilter(with_dups, fp_bits=fp_bits, seed=seed, overhead=overhead, width=width)
     assert all(k in f for k in keys) and len(f) == n + dups
-    a = RibbonFilter(keys, fp_bits=fp_bits, seed=seed, overhead=overhead).to_bytes()
+    a = RibbonFilter(keys, fp_bits=fp_bits, seed=seed, overhead=overhead, width=width).to_bytes()
     b = f.to_bytes()
     same_shape = a[24:32] == b[24:32] and a[40:44] == b[40:44]  # num_rows and attempt
     event("same shape" if same_shape else "different shape")
@@ -391,18 +414,28 @@ def test_duplicates_do_not_change_the_solution(
         assert a[16:24] != b[16:24] and _header_field(b, "<Q", 16) == n + dups
 
 
-def test_duplicates_leave_payload_unchanged_deterministic() -> None:
+@pytest.mark.parametrize("width", WIDTH_VALUES)
+def test_duplicates_leave_payload_unchanged_deterministic(width: int) -> None:
     keys = list(range(200))
-    a = RibbonFilter(keys, overhead=0.05).to_bytes()
-    b = RibbonFilter(keys + keys[:20], overhead=0.05).to_bytes()  # 220 keys still round up to the same 256 rows
+    a = RibbonFilter(keys, overhead=0.05, width=width).to_bytes()
+    b = RibbonFilter(keys + keys[:20], overhead=0.05, width=width).to_bytes()  # 220 keys still round up to 256 rows
     assert a[24:32] == b[24:32] == struct.pack("<Q", 256)
     assert a[HEADER:] == b[HEADER:] and a != b
 
 
-def test_large_set_is_order_independent() -> None:
+@pytest.mark.parametrize("width", WIDTH_VALUES)
+def test_large_set_is_order_independent(width: int) -> None:
     keys = [f"key-{i}" for i in range(20_000)]
     shuffled = random.Random(3).sample(keys, len(keys))
-    assert RibbonFilter(keys, seed=9).to_bytes() == RibbonFilter(shuffled, seed=9).to_bytes()
+    assert RibbonFilter(keys, seed=9, width=width).to_bytes() == RibbonFilter(shuffled, seed=9, width=width).to_bytes()
+
+
+def test_order_independence_above_the_bucketing_threshold() -> None:
+    """From 2^18 rows the build groups keys by start row before inserting; the bytes must not depend on that, at both widths."""
+    keys = list(range(300_000))
+    shuffled = random.Random(4).sample(keys, len(keys))
+    for width in WIDTH_VALUES:
+        assert RibbonFilter(keys, width=width).to_bytes() == RibbonFilter(shuffled, width=width).to_bytes()
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -416,13 +449,14 @@ def test_large_set_is_order_independent() -> None:
     fp_bits=st.integers(1, 3),  # many false positives: both answers occur among the non-members
     seed=SEEDS,
     data_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 def test_contains_many_equals_contains(
-    n: int, probes_n: int, kind: str, fp_bits: int, seed: int, data_seed: int
+    n: int, probes_n: int, kind: str, fp_bits: int, seed: int, data_seed: int, width: int
 ) -> None:
     rng = random.Random(data_seed)
     keys = make_keys(rng, n, kind)
-    f = RibbonFilter(keys, fp_bits=fp_bits, seed=seed)
+    f = RibbonFilter(keys, fp_bits=fp_bits, seed=seed, width=width)
     probes = keys[::2] + make_keys(rng, probes_n, "mixed")
     rng.shuffle(probes)
     expected = [k in f for k in probes]
@@ -433,8 +467,9 @@ def test_contains_many_equals_contains(
 
 
 @pytest.mark.parametrize("size", [0, 1, 1023, 1024, 1025, 2048, 5000])
-def test_contains_many_across_the_gil_release_threshold(size: int) -> None:
-    f = RibbonFilter(range(5000), fp_bits=2)
+@pytest.mark.parametrize("width", WIDTH_VALUES)
+def test_contains_many_across_the_gil_release_threshold(size: int, width: int) -> None:
+    f = RibbonFilter(range(5000), fp_bits=2, width=width)
     probes = [i * 7 - 3000 for i in range(size)]  # members and non-members interleaved
     expected = [k in f for k in probes]
     assert f.contains_many(probes) == expected
@@ -448,14 +483,15 @@ def test_contains_many_across_the_gil_release_threshold(size: int) -> None:
     seed=SEEDS,
     overhead=OVERHEADS,
     data_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 @hsettings(max_examples=150)
 def test_serialization_and_pickle_round_trips(
-    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, data_seed: int
+    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, data_seed: int, width: int
 ) -> None:
     rng = random.Random(data_seed)
     keys = make_keys(rng, n, kind)
-    f = RibbonFilter(keys, fp_bits=fp_bits, seed=seed, overhead=overhead)
+    f = RibbonFilter(keys, fp_bits=fp_bits, seed=seed, overhead=overhead, width=width)
     blob = f.to_bytes()
     non_members = make_keys(rng, 60, "mixed")
     probes = keys[:60] + non_members
@@ -467,7 +503,13 @@ def test_serialization_and_pickle_round_trips(
     for g in clones:
         assert g is not f
         assert g.to_bytes() == blob
-        assert (len(g), g.fp_bits, g.size_in_bytes, g.bits_per_key) == (len(f), fp_bits, len(blob), f.bits_per_key)
+        assert (len(g), g.fp_bits, g.width, g.size_in_bytes, g.bits_per_key) == (
+            len(f),
+            fp_bits,
+            width,
+            len(blob),
+            f.bits_per_key,
+        )
         assert repr(g) == repr(f)
         assert g.contains_many(probes) == expected
         assert [p in g for p in probes] == expected  # members stay members; non-members get the same answer
@@ -479,18 +521,18 @@ def test_serialization_and_pickle_round_trips(
 
 
 def _check_against_reference(
-    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, max_attempts: int, data_seed: int
+    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, max_attempts: int, data_seed: int, width: int
 ) -> None:
     rng = random.Random(data_seed)
     keys = make_keys(rng, n, kind)
     hashes = [ref.hash_key(k, seed) for k in keys]
     try:
-        rows, attempt, payload = ref.build(hashes, fp_bits, seed, overhead, max_attempts)
-        expected: bytes | None = ref.serialize(n, rows, fp_bits, seed, attempt, payload)
+        rows, attempt, payload = ref.build(hashes, fp_bits, seed, overhead, max_attempts, width)
+        expected: bytes | None = ref.serialize(n, rows, fp_bits, seed, attempt, payload, width)
     except ref.ReferenceError as exc:
         assert exc.status == "CONSTRUCT"
         expected = None
-    got = _try_build(keys, fp_bits=fp_bits, seed=seed, overhead=overhead, max_attempts=max_attempts)
+    got = _try_build(keys, fp_bits=fp_bits, seed=seed, overhead=overhead, max_attempts=max_attempts, width=width)
     event("built" if expected is not None else "construction failed")
     assert got == expected  # byte for byte, or both give up
     if expected is None:
@@ -509,12 +551,13 @@ def _check_against_reference(
     overhead=st.sampled_from([None, 0.0, 0.0, 0.01, 0.03, 0.06, 0.2]),
     max_attempts=st.integers(1, 5),
     data_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 @hsettings(max_examples=150)
 def test_build_and_query_match_the_reference(
-    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, max_attempts: int, data_seed: int
+    n: int, kind: str, fp_bits: int, seed: int, overhead: float | None, max_attempts: int, data_seed: int, width: int
 ) -> None:
-    _check_against_reference(n, kind, fp_bits, seed, overhead, max_attempts, data_seed)
+    _check_against_reference(n, kind, fp_bits, seed, overhead, max_attempts, data_seed, width)
 
 
 @given(
@@ -525,13 +568,14 @@ def test_build_and_query_match_the_reference(
     overhead=st.sampled_from([0.0, 0.01]),
     max_attempts=st.integers(1, 3),
     data_seed=DATA_SEEDS,
+    width=WIDTHS,
 )
 @hsettings(max_examples=100)
 def test_reference_agrees_when_construction_often_fails(
-    n: int, kind: str, fp_bits: int, seed: int, overhead: float, max_attempts: int, data_seed: int
+    n: int, kind: str, fp_bits: int, seed: int, overhead: float, max_attempts: int, data_seed: int, width: int
 ) -> None:
     """Failure (ConstructionError vs the reference's CONSTRUCT) and the attempt that succeeds must agree too."""
-    _check_against_reference(n, kind, fp_bits, seed, overhead, max_attempts, data_seed)
+    _check_against_reference(n, kind, fp_bits, seed, overhead, max_attempts, data_seed, width)
 
 
 def test_reference_comparison_is_not_vacuous() -> None:
@@ -540,18 +584,19 @@ def test_reference_comparison_is_not_vacuous() -> None:
     rng = random.Random(21)
     for i in range(80):
         n = rng.choice([100, 120, 127, 128, 130, 140])
+        width = (64, 128)[i % 2]
         keys = make_keys(rng, n, "int")
         hashes = [ref.hash_int(k, i) for k in keys]
         attempts = rng.choice([1, 2, 3])
         try:
-            rows, attempt, payload = ref.build(hashes, 8, i, 0.0, attempts)
-            exp: bytes | None = ref.serialize(n, rows, 8, i, attempt, payload)
+            rows, attempt, payload = ref.build(hashes, 8, i, 0.0, attempts, width)
+            exp: bytes | None = ref.serialize(n, rows, 8, i, attempt, payload, width)
             outcomes["built"] += 1
             outcomes["second attempt or later"] += attempt > 0
         except ref.ReferenceError:
             exp = None
             outcomes["failed"] += 1
-        assert _try_build(keys, fp_bits=8, seed=i, overhead=0.0, max_attempts=attempts) == exp
+        assert _try_build(keys, fp_bits=8, seed=i, overhead=0.0, max_attempts=attempts, width=width) == exp
     assert all(v >= 3 for v in outcomes.values()), outcomes
 
 

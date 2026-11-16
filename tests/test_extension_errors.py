@@ -116,6 +116,19 @@ def _run_child(body: str) -> None:
             """,
             id="core-build-nomem",
         ),
+        pytest.param(  # the same at width 128, whose slot table is 24 bytes a row (about 50 MiB here)
+            """
+            arr = array.array("q", range(2_000_000))
+            limit(24 * MiB)
+            try:
+                RibbonFilter(arr, width=128)
+            except MemoryError:
+                pass
+            else:
+                raise SystemExit("no MemoryError")
+            """,
+            id="core-build-nomem-width-128",
+        ),
         pytest.param(  # the 256 MiB hash array fits, the 32 MiB result array does not
             """
             f = RibbonFilter(range(10))

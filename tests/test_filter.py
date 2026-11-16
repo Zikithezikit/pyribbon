@@ -194,7 +194,7 @@ def test_to_bytes_roundtrip_and_properties() -> None:
     g = RibbonFilter.from_buffer(blob)
     assert (len(g), g.fp_bits, g.size_in_bytes, g.to_bytes()) == (len(f), 11, len(blob), blob)
     assert all(i in g for i in range(3000))
-    assert repr(f) == f"RibbonFilter(keys=3000, fp_bits=11, size_in_bytes={len(blob)})"
+    assert repr(f) == f"RibbonFilter(keys=3000, fp_bits=11, width=64, size_in_bytes={len(blob)})"
 
 
 def test_matches_pure_python_reference_byte_for_byte() -> None:
@@ -291,7 +291,7 @@ def test_type_is_final_and_immutable() -> None:
     with pytest.raises(TypeError):
         RibbonFilter.extra = 1  # type: ignore[attr-defined]
     f = RibbonFilter([1])
-    for attr in ("fp_bits", "size_in_bytes", "bits_per_key"):
+    for attr in ("fp_bits", "size_in_bytes", "bits_per_key", "width"):
         with pytest.raises(AttributeError):
             setattr(f, attr, 1)
     with pytest.raises(AttributeError):
@@ -305,6 +305,7 @@ def test_module_surface() -> None:
         "Key",
         "RibbonError",
         "RibbonFilter",
+        "Width",
         "__version__",
     ]
     assert RibbonFilter.__module__ == "pyribbon"
