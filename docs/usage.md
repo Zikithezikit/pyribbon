@@ -55,6 +55,16 @@ The measured false-positive rate matches the designed one. Each dot below is one
 [examples/03_choosing_fp_bits.py](../examples/03_choosing_fp_bits.py) measures the rate and the size for a few values of `fp_bits` on
 your own machine.
 
+### Choosing `width`
+
+`width=Width.W64` (the default) and `width=Width.W128` build the same kind of filter with the same false-positive rate. The wider ribbon needs
+less spare room in its table, so the filter is 4% to 7% smaller (8.41 against 8.99 bits per key at a million keys and
+`fp_bits=8`, and the gap grows with the set). The cost is about 1.5 times the build time, with queries about as fast. These figures are from a quick run on one machine. The benchmark tables cover width 64 only. Pick 128 for
+a filter that is built once and stored or shipped, and 64 when build time matters more than the last few percent. The width is
+saved in the serialized header, so `from_buffer` and `pickle` restore it, and `f.width` reads it. Filters of the two widths are
+different bytes for the same keys, and a filter cannot be converted from one to the other: it holds no keys, so build a new one
+from the keys.
+
 ### Saving and loading
 
 `to_bytes()` produces a versioned, little-endian format with a magic number and checksums. `from_buffer()` queries the

@@ -34,7 +34,7 @@ assert "mallory" not in f  # this non-member was rejected; one in 2**12 would sl
 assert f.contains_many(["alice", "mallory"]) == [True, False]  # one answer per key
 ```
 
-Keys can be `bytes`, `str` or `int`. A filter built from a list, an `array.array` or a numpy array of integers answers a whole
+Keys can be `bytes`, `str` or `int`. `RibbonFilter(keys, width=Width.W128)` builds a filter about 4% to 7% smaller, in about 1.5 times the build time. A filter built from a list, an `array.array` or a numpy array of integers answers a whole
 batch with `contains_many`. Save one with `f.to_bytes()` and load it back with `RibbonFilter.from_buffer(data)`, which
 reads the bytes where they are without copying them. Seven runnable scripts in
 [examples/](https://github.com/Zikithezikit/pyribbon/tree/main/examples) start with `01_quickstart.py`.

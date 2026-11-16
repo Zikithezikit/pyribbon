@@ -7,13 +7,14 @@ below means section n of that file.
 
 ## 1. Overview
 
-pyribbon is a standard ribbon filter with width 64, a fingerprint of 1 to 32 bits per key, and the interleaved column layout.
+pyribbon is a standard ribbon filter with width 64 (the default) or 128, a fingerprint of 1 to 32 bits per key, and the interleaved
+column layout.
 
 - **Standard, not homogeneous.** The fingerprint of a key is independent of its equations, so the false-positive rate is exactly
   `2**-fp_bits`. That is what the statistical tests measure, and it is what makes "retry with a new seed" a sound way to handle
   a build that cannot be solved (R§2, R§5). A homogeneous ribbon never fails to build, but its false-positive rate can exceed
   `2**-fp_bits` and is hard to check on small sets.
-- **Width 64.** A row of the system is one machine word, so shifts and parity are single instructions. A study with a simulation
+- **Width 64 and 128.** At width 64 a row of the system is one machine word, so shifts and parity are single instructions. A study with a simulation
   of the paper's elimination (`benchmarks/research/`, an i7-7700) measured the overhead needed for a 95% chance that one attempt
   succeeds:
 
@@ -22,9 +23,11 @@ pyribbon is a standard ribbon filter with width 64, a fingerprint of 1 to 32 bit
   | width 64 | 4.7% | 6.9% | 9.6% | 11.5% | 12.7% |
   | width 128 | 2.2% | 2.7% | 3.7% | 4.6% | 5.5% |
 
-  Width 128 would save about 6% of the bits per key, but it needs a two-word core with 128-bit shifts in the query, and its
-  insertion was 2 to 3 times slower in a first implementation. The file format stores the width, so adding it later does not
-  break the format.
+  Width 128 saves 4% to 7% of the bits per key (section 2 has the measured overhead table). It costs a two-word coefficient: a
+  24-byte slot instead of 16 while building, three payload words per column in a query instead of two, and a 128-bit shift in
+  the elimination. Measured on the real core, a build takes about 1.5 times as long (66 against 44 ns per key at a million keys)
+  and a query takes the same time within noise (35 against 33 ns per key in a batch). The default stays 64, so the same call
+  gives the same bytes as before. The width is stored in the header (`width_log2`), and the format version did not change.
 - **Same bytes everywhere.** The same keys, parameters and seed give the same serialized bytes on every platform. Sizing uses
   integer arithmetic only, and a pure-Python implementation of the format (`tests/spec_reference.py`) produces the same
   bytes as the C core in the tests.
@@ -33,19 +36,21 @@ pyribbon is a standard ribbon filter with width 64, a fingerprint of 1 to 32 bit
 
 | Parameter | Default | Range | Notes |
 |---|---|---|---|
-| width | 64 | fixed | Stored in the header as `width_log2`. |
+| `width` | 64 | `Width.W64` or `Width.W128` | An `IntEnum` in Python, `rb_width_kind` in C. Stored in the header as `width_log2` (6 or 7). |
 | `fp_bits` (r) | 8 | 1 to 32 | The false-positive rate is about `2**-r`. 8 matches Xor8 and Fuse8. Up to 32 keeps a row's result in a `uint32_t`. |
-| rows (m) | see below | multiple of 64, at least 128 | The interleaved layout needs a multiple of 64. At least 128 rows means every start position has a block after it. |
+| rows (m) | see below | multiple of 64, at least `2 * width` | The interleaved layout needs a multiple of 64. At least two widths of rows means every start position has the blocks after it that a query reads. |
 | `overhead` | from a table | 0 to 4 | Extra rows as a fraction of the key count. |
 | `max_attempts` | 32 | 1 to 255 | A failed attempt is retried; see below. |
 | `seed` | 0 | 0 to 2^64 - 1 | Stored in the header. Different seeds give independent filters. |
 
-**Rows.** `m = roundup64(ceil(n * (1 + overhead)))`, and never fewer than 128. The default overhead comes from a table measured
-on the real core (`make calibrate`, `core/tools/overhead_table.py`): for each size from 2^7 to 2^24 keys, the overhead at which
-97% of attempts succeed, so the expected number of attempts is about 1.03. The table is stored in parts per million and
-interpolated linearly in `n` with integer division. Sample points are 6.6% at 2^7, 5.3% at 2^10, 9.5% at 2^16, 12.5% at 2^20
-and 15.5% at 2^24. Above 2^24 the overhead grows by 0.7 percentage points per doubling. That part is extrapolated from the
-measured slope and has not been measured. A caller's `overhead` is rounded once to whole parts per million.
+**Rows.** `m = roundup64(ceil(n * (1 + overhead)))`, and never fewer than `2 * width` (128 or 256). The default overhead comes from
+a table measured on the real core (`make calibrate`, `core/tools/overhead_table.py`): for each size from 2^7 to 2^24 keys at width 64
+(to 2^22 at width 128), the overhead at which 97% of attempts succeed, so the expected number of attempts is about 1.03. The tables
+are stored in parts per million and interpolated linearly in `n` with integer division. Width 64 has sample points of 6.6% at 2^7,
+5.3% at 2^10, 9.5% at 2^16, 12.5% at 2^20 and 15.5% at 2^24, and above 2^24 the overhead grows by 0.7 percentage points per doubling.
+Width 128 has 4.0% at 2^7, 2.5% at 2^10, 3.6% at 2^16, 5.2% at 2^20 and 5.7% at 2^22, and above 2^22 it grows by 0.4 percentage points
+per doubling (0.32 measured, rounded up). The extrapolated parts have not been measured. A caller's `overhead` is rounded once to whole
+parts per million.
 
 **Integer sizing.** The row count is `ceil(n * (1e6 + ppm) / 1e6)`, so no floating-point contraction on any compiler can change
 it. `n` is at most `RB_MAX_KEYS = 2^38` and the overhead at most 4e6 ppm, which keeps the product below 2^61. An initial row count
@@ -53,7 +58,7 @@ of 2^39 or more is refused with `RB_E_TOO_LARGE`, so growth during retries stays
 the loader enforces.
 
 **Retries.** Every attempt uses a new salt (section 3.2). From the third attempt the table also grows, by a factor of
-65/64 (`(w + 1) / w`) and by at least one block of 64 rows. Reseeding does most of the work. Growth guarantees that the build ends even if the
+65/64 (`(w + 1) / w`; 129/128 at width 128) and by at least one block of 64 rows. Reseeding does most of the work. Growth guarantees that the build ends even if the
 table is too tight for some `n`. If all attempts fail, the build raises `ConstructionError`. A filter that did not pass the
 elimination is never returned.
 
@@ -105,14 +110,15 @@ redundant, so the cost is at most one extra false positive.
 
 ### 3.2 From H to the ribbon coordinates
 
-Each key gets a start row, a coefficient word and a fingerprint from three independent 64-bit words:
+Each key gets a start row, a coefficient and a fingerprint from three independent 64-bit words, and a fourth at width 128:
 
 ```
 salt  = mix64((attempt + 1) * GAMMA)         # the attempt index is stored in the header
 S     = H ^ salt
-z0 = mix64(S + 1*GAMMA)   z1 = mix64(S + 2*GAMMA)   z2 = mix64(S + 3*GAMMA)
-start = mulhi64(z0, m - 63)                  # floor(z0 * (m - w + 1) / 2^64), in [0, m - 64]
-coeff = z1 | 1                               # bit 0 is always set: the equation includes its own start row
+z0 = mix64(S + 1*GAMMA)   z1 = mix64(S + 2*GAMMA)   z2 = mix64(S + 3*GAMMA)   z3 = mix64(S + 4*GAMMA)
+start = mulhi64(z0, m - w + 1)               # floor(z0 * (m - w + 1) / 2^64), in [0, m - w]
+coeff = z1 | 1                               # width 64: bit 0 is always set, the equation includes its own start row
+coeff = (z3 << 64) | z1 | 1                  # width 128: the same low word, z3 as the upper 64 coefficient bits
 fp    = z2 >> (64 - r)                       # the top r bits
 ```
 
@@ -149,6 +155,14 @@ loop:
 Back-substitution then runs from the last row to the first, keeps one 64-bit running word per column, and writes the interleaved
 layout directly, one block of `r` words per 64 rows.
 
+**Width 128.** The coefficient is two words, `lo` (rows `start` to `start + 63`) and `hi` (the next 64), in a 24-byte slot
+`{lo, hi, res}`. A stored slot has bit 0 of `lo` set, so `lo == 0` still marks an empty slot. After the XOR bit 0 of `lo` is clear.
+If `lo != 0` the pivot is `j = ctz(lo)`, 1 to 63, and the pair shifts right by `j` (`lo = lo >> j | hi << (64 - j)`, `hi >>= j`). If
+`lo == 0` the pivot is in `hi`: the row advances by `64 + ctz(hi)` and `lo = hi >> ctz(hi)`, `hi = 0`. Both shifts are 1 to 63.
+Back-substitution keeps a two-word window per column (rows `i` to `i + 127`) and still writes one 64-bit word per column per 64
+rows, so the payload layout is the same as at width 64. Everything else (grouping by start row, retries, the checksum, loading) is
+shared with width 64, and `tests/spec_reference.py` and `core/tests/test_core.c` run both widths.
+
 **Insertion order.** The serialized bytes do not depend on the order in which keys are inserted. The set of pivots and the
 solution with all free variables zero are the same for every order, and `tests/test_property.py` checks it. For tables of at
 least 2^18 rows, `rb_build` uses that: it first groups the keys by start row with a counting sort on `start >> shift` (at most 1024
@@ -169,7 +183,11 @@ parity(W[blk][j] & (c << off)) ^ parity(W[blk + 1][j] & (c >> (64 - off)))
 
 The second term covers the bits that spill into the next block, and it is skipped when `off == 0` because a shift by 64 is undefined
 behaviour. A query stops at the first column that differs from the fingerprint. The last start row is `m - 64`, so `off == 0` there and
-the block `blk + 1` always exists when it is needed: nothing is read past the payload. `rb_contains_many` derives and prefetches
+the block `blk + 1` always exists when it is needed: nothing is read past the payload.
+
+At width 128 the shifted coefficient spans three words, `lo << off`, `lo >> (64 - off) | hi << off` and `hi >> (64 - off)`, against
+`W[blk]`, `W[blk + 1]` and `W[blk + 2]`. The last word is skipped when `off == 0`. The last start row is `m - 128`, so the highest
+row a query touches is `m - 1`: the block `blk + 2` exists whenever `off != 0`. `rb_contains_many` derives and prefetches
 chunks of 16 keys, the same way as the build.
 
 **Portable bit operations.** They live in one internal header: `ctz64`, `parity64`, `mulhi64`, `load_le64` and `store_le64`. The
@@ -187,12 +205,12 @@ Everything is little-endian and every field is explicit.
 | 0 | 8 | magic | `"PYRIBBON"` |
 | 8 | 2 | `version` | 1. A reader rejects any other version. |
 | 10 | 2 | `header_size` | 64 |
-| 12 | 1 | `width_log2` | 6 |
+| 12 | 1 | `width_log2` | 6 (width 64) or 7 (width 128) |
 | 13 | 1 | `fp_bits` | 1 to 32 |
 | 14 | 1 | `hash_id` | 1 (section 3) |
 | 15 | 1 | `flags` | 0. Reserved bits must be zero. |
 | 16 | 8 | `num_keys` | Keys supplied, duplicates included. 0 exactly when `num_rows` is 0, and never above `num_rows`. |
-| 24 | 8 | `num_rows` | 0, or a multiple of 64 from 128 to 2^40. |
+| 24 | 8 | `num_rows` | 0, or a multiple of 64 from `2 * width` (128 or 256) to 2^40. |
 | 32 | 8 | `seed` | The seed the caller gave. |
 | 40 | 4 | `attempt` | The index of the attempt that succeeded. |
 | 44 | 4 | reserved | 0 |
@@ -206,8 +224,8 @@ Everything is little-endian and every field is explicit.
 1. The buffer holds at least 64 bytes, otherwise truncated.
 2. The magic is right (magic error), the version is 1 (version error), and `header_size` is 64 (format error).
 3. `header_xxh3` matches the first 56 bytes (checksum error).
-4. `width_log2` is 6, `hash_id` is 1, `flags` and the reserved field are 0, and `fp_bits` is 1 to 32 (format error).
-5. `num_rows` is 0, or a multiple of 64 from 128 to 2^40 (format error).
+4. `width_log2` is 6 or 7, `hash_id` is 1, `flags` and the reserved field are 0, and `fp_bits` is 1 to 32 (format error).
+5. `num_rows` is 0, or a multiple of 64 from `2 * width` to 2^40 (format error).
 6. `num_keys` is 0 exactly when `num_rows` is 0, and is at most `num_rows` (format error). That keeps `len()` meaningful for a loaded filter.
 7. The payload length is `num_rows / 64 * r * 8`, at most 2^42, so it cannot overflow. A shorter buffer is truncated, and a longer one is a format error. To embed a filter in a larger buffer, slice a `memoryview`.
 8. If the payload is being verified, `payload_xxh3` matches (checksum error). This reads every byte once.
@@ -284,7 +302,7 @@ Subinterpreters that share the GIL work. If a filter outlives the module, the ex
 - `len()` counts the keys supplied, duplicates included, because removing duplicates would need a sort. `bits_per_key` therefore counts them in its denominator.
 - Builds are deterministic and independent of key order, including builds that needed retries.
 - Single-pass iterables work: keys are hashed as they stream into the temporary array.
-- `repr()` looks like `RibbonFilter(keys=1000, fp_bits=8, size_in_bytes=1146)`. `pickle` and `copy` rebuild the filter from `to_bytes()`.
+- `repr()` looks like `RibbonFilter(keys=1000, fp_bits=8, width=64, size_in_bytes=1146)`. `pickle` and `copy` rebuild the filter from `to_bytes()`.
 
 ## 7. Tests and CI
 
@@ -292,7 +310,7 @@ Subinterpreters that share the GIL work. If a filter outlives the module, the ex
 |---|---|
 | The format and the hashing, written independently in Python from the spec | `tests/spec_reference.py`, compared byte for byte with the C core through vectors in `core/tests/vectors.h` and in the Python tests |
 | No false negatives, for sizes from 0 up, every key type, every `fp_bits`, duplicates, seeds | `tests/test_property.py` (Hypothesis), `tests/test_filter.py`, `core/tests/test_core.c` |
-| The measured false-positive rate matches `2**-fp_bits`, and builds fail at the expected rate | `tests/test_statistics.py` (slow tests, run weekly by `stats.yml`), `make stats`, [measurements.md](measurements.md) |
+| The measured false-positive rate matches `2**-fp_bits`, and builds fail at the expected rate | `tests/test_statistics.py` (slow tests, run weekly by `stats.yml`), `make stats`, [measurements.md](measurements.md); width 128 in `tests/test_statistics_wide.py`, which writes no tables |
 | The loader on hostile input: every truncation, every header bit flip, crafted sizes, a differential fuzz against the Python reference, libFuzzer under ASan and UBSan | `tests/test_loader.py`, `core/fuzz/` |
 | Memory: build and free in a loop, allocation failures | `tests/test_leaks.py`, `tests/test_extension_errors.py`, `core/tests/test_nomem.c` |
 | Threads, the GIL, and free-threaded Python | `tests/test_concurrency.py`, `tests/test_free_threaded.py` |
@@ -316,7 +334,7 @@ sanitizers, a warnings-as-errors build, loader fuzzing, an sdist build, and a qu
 - Patents on ribbon filters were not searched.
 
 **Not built yet**
-- A width of 128 and/or sharding, to flatten the growth of the overhead at large sizes. This comes first, because it is the main reason to prefer a ribbon filter over a fuse filter at scale.
+- Sharding, to flatten the growth of the overhead at large sizes. Width 128 now halves that overhead but does not remove it.
 - The homogeneous variant, fractional `fp_bits`, and "smash" for small tables.
 - BuRR (0.06 to 1.4% overhead, but with bucket sorting, rollback, per-bucket thresholds and four recursion layers) and the balanced variant.
 - SIMD queries and a parallel build.
