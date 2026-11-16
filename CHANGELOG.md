@@ -4,7 +4,41 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+This release adds ribbon width 128. The default is still width 64, so existing code builds the same filters, byte for byte, and
+filters saved by 0.1.2 load unchanged.
+
+### Added
+- `RibbonFilter(..., width=Width.W128)` builds a ribbon filter of width 128, which needs less spare room in its table: the filter
+  is 4% to 7% smaller than at width 64 (8.41 against 8.99 bits per key at a million keys, `fp_bits=8`). A build takes about 1.5
+  times as long and queries are as fast. These figures are from a quick run on one machine; the benchmark tables cover width 64 only.
+- `Width`, a new `IntEnum` with the two members `W64` and `W128`, the only values the `width` argument accepts. Anything else
+  raises `ValueError`. The default is `Width.W64`.
+- `RibbonFilter.width` reads the width a filter was built with, as a `Width`.
+- The file format stores width 128 as `width_log2 = 7`, with at least 256 rows. The format version is still 1, so 0.1.2
+  rejects a width-128 filter with a `FormatError` rather than misreading it. A filter cannot be converted from one width to
+  the other, because it holds no keys: build a new one from the keys.
+- C core: `rb_params.width` (an `rb_width_kind`: `RB_WIDTH_64` or `RB_WIDTH_128`), `rb_width()` and `rb_default_overhead_width()`.
+  `make -C core calibrate WIDTH=128` measures the default-overhead table, which is measured up to 2^22 slots at this width and
+  extrapolated above that.
+
+### Changed
+- `repr()` of a filter now includes the width: `RibbonFilter(keys=1000, fp_bits=8, width=64, size_in_bytes=1146)`.
+- C core: `rb_params` has a new `width` field, so code compiled against the old header must be rebuilt, and a `rb_params` that
+  is not made with `rb_params_default()` must set `width` to `RB_WIDTH_64` or `RB_WIDTH_128` (any other value, 0 included, is
+  `RB_E_INVALID_ARG`).
+- Width-64 queries are a little faster than in 0.1.2 (about 6% in batches and 1% for one key in the C core, on one machine); builds
+  and the bytes written are unchanged.
+
+### Tests
+- Both widths run through the C unit tests, the byte-for-byte comparison with the pure-Python reference, the property tests, the
+  loader tests, the thread, leak and allocation-failure tests and the fuzz corpus. Width 128 has its own slow statistical tests
+  (`tests/test_statistics_wide.py`) that write nothing to `docs/measurements.md`.
+
+### Documentation
 - The README shows the pyribbon logo. The logo files are in `docs/img/logo/`: the mark and the lockup as SVG, in colour, ink, white and single-colour versions, a few PNG sizes, and a social preview image. The README uses the colour lockup on a white backing, so it reads on a dark page.
+- The API reference, usage guide, limits page and internals describe width 128, the `Width` type and the file format change.
 
 ## [0.1.2] - 2026-11-14
 
