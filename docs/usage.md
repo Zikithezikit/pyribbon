@@ -16,6 +16,7 @@ Start with `01_quickstart.py` and read them in order. Each script in [`examples/
 | [05_batches_and_arrays.py](../examples/05_batches_and_arrays.py) | `contains_many` with lists, `array.array` and numpy |
 | [06_errors.py](../examples/06_errors.py) | Every error a caller can get, and what causes it |
 | [07_threads.py](../examples/07_threads.py) | Querying one filter from several threads |
+| [08_width.py](../examples/08_width.py) | Width 64 against width 128: size and build time for the same keys |
 
 ## Using a filter
 

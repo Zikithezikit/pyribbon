@@ -39,6 +39,7 @@ filters saved by 0.1.2 load unchanged.
 ### Documentation
 - The README shows the pyribbon logo. The logo files are in `docs/img/logo/`: the mark and the lockup as SVG, in colour, ink, white and single-colour versions, a few PNG sizes, and a social preview image. The README uses the colour lockup on a white backing, so it reads on a dark page.
 - The API reference, usage guide, limits page and internals describe width 128, the `Width` type and the file format change.
+- `examples/08_width.py` compares the two widths.
 
 ## [0.1.2] - 2026-11-14
 
