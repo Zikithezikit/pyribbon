@@ -30,7 +30,7 @@ jobs:
             platform: linux/arm/v7
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4.0.0
+      - uses: docker/setup-qemu-action@v4.4.0
       - name: Build a Debian image with a compiler and the Python test dependencies
         run: |
           docker build --platform ${{ matrix.platform }} -t cross-arch -f - . <<'DOCKERFILE'
