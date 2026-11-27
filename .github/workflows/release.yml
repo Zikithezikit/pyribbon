@@ -102,7 +102,7 @@ jobs:
           subject-path: "dist/*"
       - name: Install uv
         # setup-uv publishes exact tags only (no floating v10 major tag), so pin the full version
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
       - name: Publish to PyPI
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
